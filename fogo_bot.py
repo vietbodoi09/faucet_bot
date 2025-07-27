@@ -12,7 +12,9 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 
 from solana.rpc.async_api import AsyncClient
 from solana.transaction import Transaction
-from solana.keypair import Keypair as SolanaKeypair
+# Thay đổi dòng import này:
+# from solana.keypair import Keypair as SolanaKeypair
+from solders.keypair import Keypair as SolanaKeypair # Corrected import for Keypair
 from solana.publickey import PublicKey
 from solana.rpc.types import TxOpts
 from spl.token.instructions import TransferCheckedParams, transfer_checked, get_associated_token_address, create_associated_token_account
@@ -130,8 +132,8 @@ async def send_fogo_spl_token(to_address: str, amount: int):
         logger.info(f"Sending {amount / 1_000_000_000} FOGO to {to_address}")
 
         decoded_key = base58.b58decode(PRIVATE_KEY)
-        sender = SolanaKeypair.from_secret_key(decoded_key)
-        sender_pubkey = sender.public_key
+        sender = SolanaKeypair.from_bytes(decoded_key) # Use from_bytes for solders.keypair.Keypair
+        sender_pubkey = sender.pubkey() # Use pubkey() for solders.keypair.Keypair
         receiver_pubkey = PublicKey(to_address)
 
         sender_token_account = get_associated_token_address(sender_pubkey, FOGO_TOKEN_MINT)
@@ -139,7 +141,7 @@ async def send_fogo_spl_token(to_address: str, amount: int):
 
         async with AsyncClient("https://testnet.fogo.io") as client:
             resp = await client.get_account_info(receiver_token_account)
-            account_exists = resp.get("result", {}).get("value") is not None
+            account_exists = resp.value is not None # Access value directly from Client.get_account_info() response
 
         async with httpx.AsyncClient(timeout=20.0) as http_client:
             payload = {
@@ -174,7 +176,7 @@ async def send_fogo_spl_token(to_address: str, amount: int):
                 source=sender_token_account,
                 mint=FOGO_TOKEN_MINT,
                 dest=receiver_token_account,
-                owner=sender.public_key,
+                owner=sender.pubkey(), # Use pubkey() for solders.keypair.Keypair
                 amount=amount,
                 decimals=DECIMALS,
                 signers=[]
@@ -187,8 +189,9 @@ async def send_fogo_spl_token(to_address: str, amount: int):
         async with AsyncClient("https://testnet.fogo.io") as client:
             send_resp = await client.send_raw_transaction(raw_tx, opts=TxOpts(skip_confirmation=False))
 
-        if send_resp and isinstance(send_resp, dict) and 'result' in send_resp:
-            return send_resp['result']
+        # Kiểm tra cấu trúc phản hồi từ send_raw_transaction
+        if send_resp and isinstance(send_resp, str): # send_raw_transaction returns a string (transaction hash) on success
+            return send_resp
         else:
             logger.error(f"Failed to send transaction: {send_resp}")
             return None
