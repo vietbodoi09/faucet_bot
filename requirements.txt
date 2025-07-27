@@ -1,7 +1,4 @@
 python-telegram-bot==20.3
-
-solana==0.29.0
-
+solana==0.33.0  # Đã nâng cấp để tương thích với httpx 0.24.x
 httpx==0.24.1
-
 base58==2.1.1
