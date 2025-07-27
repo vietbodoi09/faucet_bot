@@ -12,8 +12,8 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 
 from solana.rpc.async_api import AsyncClient
 from solana.transaction import Transaction
-from solders.keypair import Keypair as SolanaKeypair
-from solders.pubkey import Pubkey as PublicKey
+from solana.keypair import Keypair as SolanaKeypair
+from solana.publickey import PublicKey
 from solana.rpc.types import TxOpts
 from spl.token.instructions import TransferCheckedParams, transfer_checked, get_associated_token_address, create_associated_token_account
 from spl.token.constants import TOKEN_PROGRAM_ID
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 # Constants
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PRIVATE_KEY = os.getenv("PRIVATE_KEY")
-FOGO_TOKEN_MINT = PublicKey.from_string("So11111111111111111111111111111111111111112")
+FOGO_TOKEN_MINT = PublicKey("So11111111111111111111111111111111111111112")
 
 if PRIVATE_KEY is None:
     logger.critical("FOGO_BOT_PRIVATE_KEY environment variable is not set.")
