@@ -10,10 +10,10 @@ import json
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-from solana.rpc.async_api import AsyncClient
+from solana.rpc.api import Client
 from solana.transaction import Transaction
-from solana.keypair import Keypair as SolanaKeypair
-from solana.publickey import PublicKey
+from solders.keypair import Keypair
+from solders.pubkey import Pubkey
 from solana.rpc.types import TxOpts
 from spl.token.instructions import TransferCheckedParams, transfer_checked, get_associated_token_address, create_associated_token_account
 from spl.token.constants import TOKEN_PROGRAM_ID
@@ -21,7 +21,6 @@ from spl.token.constants import TOKEN_PROGRAM_ID
 import httpx
 
 from dotenv import load_dotenv
-import os
 
 load_dotenv()
 # Logger setup
@@ -31,7 +30,7 @@ logger = logging.getLogger(__name__)
 # Constants
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PRIVATE_KEY = os.getenv("PRIVATE_KEY")
-FOGO_TOKEN_MINT = PublicKey("So11111111111111111111111111111111111111112")
+FOGO_TOKEN_MINT = Pubkey.from_string("So11111111111111111111111111111111111111112")
 
 if PRIVATE_KEY is None:
     logger.critical("FOGO_BOT_PRIVATE_KEY environment variable is not set.")
@@ -45,8 +44,6 @@ DB_PATH = "fogo_requests.db"
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-
-    # Tạo bảng nếu chưa có
     c.execute("""
         CREATE TABLE IF NOT EXISTS requests (
             user_id INTEGER PRIMARY KEY,
@@ -55,7 +52,6 @@ def init_db():
             tx_hash TEXT
         )
     """)
-
     conn.commit()
     conn.close()
 
@@ -119,12 +115,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if tx_hash:
             update_last_request_time(user_id, datetime.datetime.now(), address, tx_hash)
             await update.message.reply_text(
-                f"✅ Tokens sent successfully!\n"
+                f"\u2705 Tokens sent successfully!\n"
                 f"[View transaction](https://fogoscan.com/tx/{tx_hash}?cluster=testnet)",
                 parse_mode="Markdown"
             )
         else:
-            await update.message.reply_text("❌ Failed to send tokens. Please try again later.")
+            await update.message.reply_text("\u274C Failed to send tokens. Please try again later.")
     else:
         await update.message.reply_text("Use /start or /send to request tokens.")
 
@@ -133,27 +129,27 @@ async def send_fogo_spl_token(to_address: str, amount: int):
         logger.info(f"Sending {amount / 1_000_000_000} FOGO to {to_address}")
 
         decoded_key = base58.b58decode(PRIVATE_KEY)
-        sender = SolanaKeypair.from_secret_key(decoded_key)
-        sender_pubkey = sender.public_key
-        receiver_pubkey = PublicKey(to_address)
+        sender = Keypair.from_bytes(decoded_key[:64])
+        sender_pubkey = sender.pubkey()
+        receiver_pubkey = Pubkey.from_string(to_address)
 
         sender_token_account = get_associated_token_address(sender_pubkey, FOGO_TOKEN_MINT)
         receiver_token_account = get_associated_token_address(receiver_pubkey, FOGO_TOKEN_MINT)
 
-        async with AsyncClient("https://testnet.fogo.io") as client:
-            resp = await client.get_account_info(receiver_token_account)
-            account_exists = resp.get("result", {}).get("value") is not None
+        client = Client("https://testnet.fogo.io")
+        resp = client.get_account_info(receiver_token_account)
+        account_exists = resp.get("result", {}).get("value") is not None
 
-        async with httpx.AsyncClient(timeout=20.0) as http_client:
-            payload = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "getLatestBlockhash",
-                "params": []
-            }
-            rpc_response = await http_client.post("https://testnet.fogo.io", json=payload)
-            rpc_json = rpc_response.json()
-            latest_blockhash = rpc_json.get("result", {}).get("value", {}).get("blockhash")
+        http_client = httpx.Client(timeout=20.0)
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getLatestBlockhash",
+            "params": []
+        }
+        rpc_response = http_client.post("https://testnet.fogo.io", json=payload)
+        rpc_json = rpc_response.json()
+        latest_blockhash = rpc_json.get("result", {}).get("value", {}).get("blockhash")
 
         if not latest_blockhash:
             logger.error(f"Invalid blockhash response: {rpc_json}")
@@ -177,19 +173,17 @@ async def send_fogo_spl_token(to_address: str, amount: int):
                 source=sender_token_account,
                 mint=FOGO_TOKEN_MINT,
                 dest=receiver_token_account,
-                owner=sender.public_key,
+                owner=sender_pubkey,
                 amount=amount,
                 decimals=DECIMALS,
                 signers=[]
             )
         )
         tx.add(transfer_ix)
-        tx.sign(sender)
+        tx.sign([sender])
         raw_tx = tx.serialize()
 
-        async with AsyncClient("https://testnet.fogo.io") as client:
-            send_resp = await client.send_raw_transaction(raw_tx, opts=TxOpts(skip_confirmation=False))
-
+        send_resp = client.send_raw_transaction(raw_tx, opts=TxOpts(skip_confirmation=False))
         if send_resp and isinstance(send_resp, dict) and 'result' in send_resp:
             return send_resp['result']
         else:
