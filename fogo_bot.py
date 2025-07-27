@@ -15,7 +15,7 @@ from solana.transaction import Transaction
 # Thay đổi dòng import này:
 # from solana.keypair import Keypair as SolanaKeypair
 from solders.keypair import Keypair as SolanaKeypair # Corrected import for Keypair
-from solana.publickey import PublicKey
+from solders.pubkey import Pubkey as PublicKey
 from solana.rpc.types import TxOpts
 from spl.token.instructions import TransferCheckedParams, transfer_checked, get_associated_token_address, create_associated_token_account
 from spl.token.constants import TOKEN_PROGRAM_ID
