@@ -20,13 +20,17 @@ from spl.token.constants import TOKEN_PROGRAM_ID
 
 import httpx
 
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
 # Logger setup
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Constants
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-PRIVATE_KEY = os.getenv("FOGO_BOT_PRIVATE_KEY")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+PRIVATE_KEY = os.getenv("PRIVATE_KEY")
 FOGO_TOKEN_MINT = PublicKey("So11111111111111111111111111111111111111112")
 
 if PRIVATE_KEY is None:
