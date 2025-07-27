@@ -12,7 +12,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 
 from solana.rpc.async_api import AsyncClient
 from solana.transaction import Transaction
-from solana.keypair import Keypair as SolanaKeypair
+from solders.keypair import Keypair as SolanaKeypair
 from solana.publickey import PublicKey
 from solana.rpc.types import TxOpts
 from spl.token.instructions import TransferCheckedParams, transfer_checked, get_associated_token_address, create_associated_token_account
