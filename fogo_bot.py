@@ -101,9 +101,16 @@ async def send_native_fogo(to_address: str, amount: int):
     sender_pubkey = sender.public_key
     receiver_pubkey = PublicKey(to_address)
 
-    # Lấy recent blockhash qua _provider.make_request
     async with AsyncClient("https://testnet.fogo.io") as client:
         resp = await client._provider.make_request("getLatestBlockhash", [])
+
+        logger.info(f"getLatestBlockhash response: {resp}")
+
+        # Kiểm tra resp có đúng định dạng không
+        if "result" not in resp or "value" not in resp["result"]:
+            logger.error(f"Invalid response from getLatestBlockhash: {resp}")
+            return None
+
         recent_blockhash = resp["result"]["value"]["blockhash"]
 
         tx = Transaction()
