@@ -243,7 +243,7 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     context.user_data['waiting_for_spl_address'] = True
-    await update.message.reply_text("Please send your Solana wallet address for SPL FOGO:")
+    await update.message.reply_text("Please send your FOGO wallet address for SPL FOGO:")
 
 # /send_fee command: native FOGO
 async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -262,7 +262,7 @@ async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     context.user_data['waiting_for_fee_address'] = True
-    await update.message.reply_text("Please send your Solana wallet address to receive native FOGO:")
+    await update.message.reply_text("Please send your FOGO wallet address to receive native FOGO:")
 
 # Handle text messages (wallet address input)
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
