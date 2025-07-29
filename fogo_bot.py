@@ -101,36 +101,32 @@ async def send_native_fogo(to_address: str, amount: int):
     sender_pubkey = sender.public_key
     receiver_pubkey = PublicKey(to_address)
 
-    tx = Transaction()
-
-    # Lấy recent blockhash bằng cách gọi đúng hàm AsyncClient
+    # Lấy recent blockhash qua _provider.make_request
     async with AsyncClient("https://testnet.fogo.io") as client:
-        recent_blockhash_resp = await client.get_latest_blockhash()
-        if not recent_blockhash_resp or not recent_blockhash_resp.value:
-            logger.error(f"Failed to get recent blockhash: {recent_blockhash_resp}")
+        resp = await client._provider.make_request("getLatestBlockhash", [])
+        recent_blockhash = resp["result"]["value"]["blockhash"]
+
+        tx = Transaction()
+        tx.fee_payer = sender_pubkey
+        tx.recent_blockhash = recent_blockhash
+
+        tx.add(transfer(
+            TransferParams(
+                from_pubkey=sender_pubkey,
+                to_pubkey=receiver_pubkey,
+                lamports=amount
+            )
+        ))
+
+        tx.sign(sender)
+
+        send_resp = await client.send_raw_transaction(tx.serialize(), opts=TxOpts(skip_confirmation=False))
+
+        if send_resp and 'result' in send_resp:
+            return send_resp['result']
+        else:
+            logger.error(f"Failed to send native FOGO tx: {send_resp}")
             return None
-        recent_blockhash = recent_blockhash_resp.value.blockhash
-
-    tx.add(transfer(
-        TransferParams(
-            from_pubkey=sender_pubkey,
-            to_pubkey=receiver_pubkey,
-            lamports=amount
-        )
-    ))
-
-    tx.recent_blockhash = recent_blockhash
-    tx.fee_payer = sender_pubkey
-    tx.sign(sender)
-
-    async with AsyncClient("https://testnet.fogo.io") as client:
-        resp = await client.send_raw_transaction(tx.serialize(), opts=TxOpts(skip_confirmation=False))
-
-    if resp and resp.value:
-        return resp.value
-    else:
-        logger.error(f"Failed to send native FOGO tx: {resp}")
-        return None
 
 
 # Send SPL FOGO tokens
