@@ -81,9 +81,11 @@ async def send_fogo_spl_token(to_address: str, amount: int) -> str:
     async with AsyncClient(SOLANA_RPC) as client:
         token = AsyncToken(client, FOGO_MINT, TOKEN_PROGRAM_ID, SENDER_KEYPAIR)
         ata = get_associated_token_address(Pubkey.from_string(to_address), FOGO_MINT)
+
         info = await client.get_account_info(ata)
+        account_info = info.get("result", {}).get("value")  # Sửa truy cập dict đúng
         tx = Transaction()
-        if info.value is None:
+        if account_info is None:
             tx.add(
                 create_associated_token_account(
                     payer=SENDER_KEYPAIR.pubkey(),
@@ -103,6 +105,7 @@ async def send_fogo_spl_token(to_address: str, amount: int) -> str:
         recent_blockhash = await get_latest_blockhash()
         tx.recent_blockhash = recent_blockhash
         tx.fee_payer = SENDER_KEYPAIR.pubkey()
+
         result = await client.send_transaction(tx, SENDER_KEYPAIR, opts=TxOpts(skip_confirmation=False))
         return result["result"]
 
@@ -165,9 +168,11 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE, req
         await update.message.reply_text("🚫 An error occurred while sending the token.")
 
 async def send_fogo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Gửi 1 FOGO token (1_000_000_000 là số lượng tối thiểu cho 9 decimals)
     await handle_request(update, context, "spl", amount=1_000_000_000)
 
 async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Gửi 0.01 SOL native FOGO
     await handle_request(update, context, "native", amount=0.01)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
