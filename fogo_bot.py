@@ -177,8 +177,7 @@ async def send_fogo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Error sending SPL FOGO.")
 
 # Main
-async def main():
-    # Support legacy env var name
+async def run_bot():
     token = os.getenv("BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
         raise RuntimeError("Missing BOT_TOKEN or TELEGRAM_BOT_TOKEN in environment")
@@ -192,11 +191,12 @@ async def main():
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        asyncio.run(run_bot())
     except RuntimeError as e:
         if "event loop is already running" in str(e):
             import nest_asyncio
             nest_asyncio.apply()
-            asyncio.get_event_loop().run_until_complete(main())
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(run_bot())
         else:
             raise
