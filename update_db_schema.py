@@ -1,29 +1,21 @@
 import sqlite3
 
-conn = sqlite3.connect("requests.db")  # Đổi nếu DB bạn có tên khác
+DB_PATH = "fogo_requests.db"  # Đúng tên file bạn đang dùng
+
+conn = sqlite3.connect(DB_PATH)
 c = conn.cursor()
 
-# Thêm cột 'request_type' nếu chưa tồn tại
-try:
-    c.execute("ALTER TABLE requests ADD COLUMN request_type TEXT")
-    print("✅ Added column: request_type")
-except sqlite3.OperationalError as e:
-    print("ℹ️ Column 'request_type' may already exist:", e)
-
-# Thêm cột 'wallet' nếu chưa tồn tại
-try:
-    c.execute("ALTER TABLE requests ADD COLUMN wallet TEXT")
-    print("✅ Added column: wallet")
-except sqlite3.OperationalError as e:
-    print("ℹ️ Column 'wallet' may already exist:", e)
-
-# Thêm cột 'tx' nếu chưa tồn tại
-try:
-    c.execute("ALTER TABLE requests ADD COLUMN tx TEXT")
-    print("✅ Added column: tx")
-except sqlite3.OperationalError as e:
-    print("ℹ️ Column 'tx' may already exist:", e)
+# Tạo bảng nếu chưa tồn tại
+c.execute("""
+CREATE TABLE IF NOT EXISTS requests (
+    user_id INTEGER,
+    last_request TEXT,
+    request_type TEXT,
+    wallet TEXT,
+    tx TEXT
+)
+""")
 
 conn.commit()
 conn.close()
-print("🎉 Database schema updated without losing existing data.")
+print("✅ Table 'requests' created or already exists.")
