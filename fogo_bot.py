@@ -25,8 +25,7 @@ from spl.token.constants import TOKEN_PROGRAM_ID
 
 import httpx
 
-
-# Logger
+# Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -35,9 +34,9 @@ BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 PRIVATE_KEY = os.getenv("FOGO_BOT_PRIVATE_KEY")
 FOGO_TOKEN_MINT = PublicKey("So11111111111111111111111111111111111111112")
 
-AMOUNT_TO_SEND_FOGO = 500_000_000      # 0.5 SPL
-AMOUNT_TO_SEND_NATIVE = 500_000_000    # 0.5 FOGO native
-MIN_BALANCE_THRESHOLD = 10_000_000     # 0.01 FOGO
+AMOUNT_TO_SEND_FOGO = 500_000_000
+AMOUNT_TO_SEND_NATIVE = 500_000_000
+MIN_BALANCE_THRESHOLD = 10_000_000
 
 DB_PATH = "fogo_requests.db"
 
@@ -45,7 +44,7 @@ if PRIVATE_KEY is None:
     logger.critical("FOGO_BOT_PRIVATE_KEY environment variable is not set.")
     raise EnvironmentError("FOGO_BOT_PRIVATE_KEY is missing.")
 
-# DB
+# --- Database ---
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -82,7 +81,7 @@ def update_last_request_time(user_id, request_type, request_time, wallet, tx_has
     conn.commit()
     conn.close()
 
-# Commands
+# --- Bot Commands ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = update.effective_user.first_name or "there"
     await update.message.reply_text(
@@ -110,22 +109,10 @@ async def send_fogo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    now = datetime.datetime.now()
-    last = get_last_request_time(user_id, "native")
-
-    if last and now - last < datetime.timedelta(hours=24):
-        remaining = datetime.timedelta(hours=24) - (now - last)
-        h, m = divmod(int(remaining.total_seconds()), 3600)
-        m, s = divmod(m, 60)
-        await update.message.reply_text(
-            f"You've already received native FOGO in the last 24 hours.\nTry again in {h}h {m}m {s}s."
-        )
-        return
-
     context.user_data['waiting_for_fee_address'] = True
     await update.message.reply_text("Send your Solana wallet address to receive native FOGO:")
 
-# Message handling
+# --- Message Handling ---
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     user_id = update.effective_user.id
@@ -141,7 +128,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Use /start, /send_fogo, or /send_fee.")
 
-# Token logic
+# --- Logic: SPL ---
 async def handle_token_request(update, context, address, user_id):
     if not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,44}", address):
         await update.message.reply_text("Invalid wallet address.")
@@ -159,6 +146,7 @@ async def handle_token_request(update, context, address, user_id):
     else:
         await update.message.reply_text("❌ Failed to send SPL token.")
 
+# --- Logic: Native ---
 async def handle_native_fee_request(update, context, address, user_id):
     if not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,44}", address):
         await update.message.reply_text("Invalid wallet address.")
@@ -168,6 +156,18 @@ async def handle_native_fee_request(update, context, address, user_id):
         pubkey = PublicKey(address)
     except Exception:
         await update.message.reply_text("Invalid public key format.")
+        return
+
+    # ✅ Check cooldown by Telegram user ID only
+    now = datetime.datetime.now()
+    last = get_last_request_time(user_id, "native")
+    if last and now - last < datetime.timedelta(hours=24):
+        remaining = datetime.timedelta(hours=24) - (now - last)
+        h, m = divmod(int(remaining.total_seconds()), 3600)
+        m, s = divmod(m, 60)
+        await update.message.reply_text(
+            f"You've already received native FOGO in the last 24 hours.\nTry again in {h}h {m}m {s}s."
+        )
         return
 
     await update.message.reply_text("Checking wallet balance...")
@@ -194,7 +194,7 @@ async def handle_native_fee_request(update, context, address, user_id):
     else:
         await update.message.reply_text("❌ Failed to send native FOGO.")
 
-# Sending functions
+# --- Blockchain Senders ---
 async def send_fogo_spl_token(to_address: str, amount: int):
     try:
         decoded_key = base58.b58decode(PRIVATE_KEY)
@@ -276,13 +276,13 @@ async def send_native_fogo(to_pubkey: PublicKey, amount: int):
         logger.error(f"Native send error: {e}", exc_info=True)
         return None
 
-# Errors
+# --- Error Handler ---
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Unexpected error: {context.error}", exc_info=True)
     if update and update.message:
         await update.message.reply_text("An error occurred. Please try again later.")
 
-# Main
+# --- Main ---
 if __name__ == "__main__":
     init_db()
     app = Application.builder().token(BOT_TOKEN).build()
