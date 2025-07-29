@@ -85,8 +85,12 @@ def is_valid_solana_address(address: str) -> bool:
 # Get native FOGO balance (lamports)
 async def get_native_balance(pubkey_str: str) -> int:
     async with AsyncClient("https://testnet.fogo.io") as client:
-        resp = await client._provider.make_request("getLatestBlockhash", [])
-        blockhash = resp['result']['value']['blockhash']
+        resp = await client.get_balance(PublicKey(pubkey_str))
+        data = resp.__dict__  # chuyển sang dict để debug
+        if 'result' not in resp._response or resp._response['result'] is None:
+            logger.error(f"get_balance RPC error or no result: {resp._response}")
+            return 0
+        return resp.value  # chính xác là số lamports
 
 # Send native FOGO lamports
 async def send_native_fogo(to_address: str, amount: int):
@@ -96,6 +100,15 @@ async def send_native_fogo(to_address: str, amount: int):
     receiver_pubkey = PublicKey(to_address)
 
     tx = Transaction()
+
+    # Lấy recent blockhash bằng cách gọi đúng hàm AsyncClient
+    async with AsyncClient("https://testnet.fogo.io") as client:
+        recent_blockhash_resp = await client.get_latest_blockhash()
+        if not recent_blockhash_resp or not recent_blockhash_resp.value:
+            logger.error(f"Failed to get recent blockhash: {recent_blockhash_resp}")
+            return None
+        recent_blockhash = recent_blockhash_resp.value.blockhash
+
     tx.add(transfer(
         TransferParams(
             from_pubkey=sender_pubkey,
@@ -104,23 +117,19 @@ async def send_native_fogo(to_address: str, amount: int):
         )
     ))
 
-    # Fetch latest blockhash
-    async with AsyncClient("https://testnet.fogo.io") as client:
-        resp = await client.get_latest_blockhash()
-        blockhash = resp['result']['value']['blockhash']
-
-    tx.recent_blockhash = blockhash
+    tx.recent_blockhash = recent_blockhash
     tx.fee_payer = sender_pubkey
     tx.sign(sender)
 
     async with AsyncClient("https://testnet.fogo.io") as client:
         resp = await client.send_raw_transaction(tx.serialize(), opts=TxOpts(skip_confirmation=False))
 
-    if resp and 'result' in resp:
-        return resp['result']
+    if resp and resp.value:
+        return resp.value
     else:
         logger.error(f"Failed to send native FOGO tx: {resp}")
         return None
+
 
 # Send SPL FOGO tokens
 async def send_fogo_spl_token(to_address: str, amount: int):
