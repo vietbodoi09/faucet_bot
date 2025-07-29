@@ -7,70 +7,74 @@ import re
 import base58
 import json
 
-import httpx
-
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 from solana.rpc.async_api import AsyncClient
-from solana.rpc.types import TxOpts
-from solana.keypair import Keypair
-from solana.publickey import PublicKey
 from solana.transaction import Transaction
+from solana.keypair import Keypair as SolanaKeypair
+from solana.publickey import PublicKey
+from solana.rpc.types import TxOpts
 from solana.system_program import transfer, TransferParams
-from solana.blockhash import Blockhash
+from spl.token.instructions import TransferCheckedParams, transfer_checked, get_associated_token_address, create_associated_token_account
+from spl.token.constants import TOKEN_PROGRAM_ID
 
-from spl.token.instructions import get_associated_token_address, create_associated_token_account, transfer_checked
+import httpx
 
-# Constants
-DATABASE = "fogo_requests.db"
-RPC_ENDPOINT = "https://testnet.fogo.io"
-FAUCET_KEYPAIR_PATH = "faucet.json"
-FOGO_TOKEN_MINT = PublicKey("So11111111111111111111111111111111111111112")
-SEND_AMOUNT = 1_000_000  # Adjust as needed
-FEE_AMOUNT = 100_000     # Native FOGO fee
-BALANCE_THRESHOLD = 10_000_000  # 0.01 FOGO in lamports
-
-# Logging
-logging.basicConfig(level=logging.INFO)
+# Logger setup
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Load faucet keypair
-def load_faucet_keypair():
-    with open(FAUCET_KEYPAIR_PATH, "r") as f:
-        secret = json.load(f)
-    return Keypair.from_secret_key(bytes(secret))
+# Constants and environment variables
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+PRIVATE_KEY = os.getenv("FOGO_BOT_PRIVATE_KEY")
+FOGO_TOKEN_MINT = PublicKey("So11111111111111111111111111111111111111112")
 
-# Cooldown check
-def is_on_cooldown(user_id: int, command: str) -> bool:
-    conn = sqlite3.connect(DATABASE)
+if PRIVATE_KEY is None:
+    logger.critical("FOGO_BOT_PRIVATE_KEY environment variable is not set.")
+    raise EnvironmentError("FOGO_BOT_PRIVATE_KEY is missing.")
+
+AMOUNT_TO_SEND_FOGO = 500_000_000  # 0.5 SPL FOGO (in base units, decimals=9)
+FEE_AMOUNT = 100_000               # 0.0001 native FOGO (lamports)
+DECIMALS = 9
+DB_PATH = "fogo_requests.db"
+
+# Database init & helpers
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("""
         CREATE TABLE IF NOT EXISTS requests (
             user_id INTEGER,
             request_type TEXT,
-            last_request TIMESTAMP
+            last_request TIMESTAMP,
+            wallet TEXT,
+            tx_hash TEXT,
+            PRIMARY KEY (user_id, request_type)
         )
     """)
-    c.execute("SELECT last_request FROM requests WHERE user_id=? AND request_type=?", (user_id, command))
-    row = c.fetchone()
-    if row:
-        last_request = datetime.datetime.fromisoformat(row[0])
-        if datetime.datetime.now() - last_request < datetime.timedelta(hours=24):
-            conn.close()
-            return True
-    conn.close()
-    return False
-
-def update_cooldown(user_id: int, command: str):
-    conn = sqlite3.connect(DATABASE)
-    c = conn.cursor()
-    c.execute("REPLACE INTO requests (user_id, request_type, last_request) VALUES (?, ?, ?)",
-              (user_id, command, datetime.datetime.now().isoformat()))
     conn.commit()
     conn.close()
 
-# Validate wallet address
+def get_last_request_time(user_id, request_type):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT last_request FROM requests WHERE user_id = ? AND request_type = ?", (user_id, request_type))
+    row = c.fetchone()
+    conn.close()
+    if row:
+        return datetime.datetime.fromisoformat(row[0])
+    return None
+
+def update_last_request_time(user_id, request_type, request_time, wallet, tx_hash):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("REPLACE INTO requests (user_id, request_type, last_request, wallet, tx_hash) VALUES (?, ?, ?, ?, ?)",
+              (user_id, request_type, request_time.isoformat(), wallet, tx_hash))
+    conn.commit()
+    conn.close()
+
+# Validate Solana address (simple base58 length check)
 def is_valid_solana_address(address: str) -> bool:
     try:
         decoded = base58.b58decode(address)
@@ -78,143 +82,244 @@ def is_valid_solana_address(address: str) -> bool:
     except Exception:
         return False
 
-# Check wallet native FOGO balance
-async def get_native_balance(pubkey: str) -> int:
-    async with httpx.AsyncClient() as client:
-        response = await client.post(RPC_ENDPOINT, json={
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "getBalance",
-            "params": [pubkey]
-        })
-    return response.json()["result"]["value"]
+# Get native FOGO balance (lamports)
+async def get_native_balance(pubkey_str: str) -> int:
+    async with AsyncClient("https://testnet.fogo.io") as client:
+        resp = await client.get_balance(PublicKey(pubkey_str))
+        return resp['result']['value'] if resp and 'result' in resp else 0
 
-# Send native FOGO
-async def send_native_fogo_fee(to_address: str, amount: int):
-    sender = load_faucet_keypair()
+# Send native FOGO lamports
+async def send_native_fogo(to_address: str, amount: int):
+    decoded_key = base58.b58decode(PRIVATE_KEY)
+    sender = SolanaKeypair.from_secret_key(decoded_key)
     sender_pubkey = sender.public_key
     receiver_pubkey = PublicKey(to_address)
 
     tx = Transaction()
-    tx.add(transfer(TransferParams(from_pubkey=sender_pubkey, to_pubkey=receiver_pubkey, lamports=amount)))
+    tx.add(transfer(
+        TransferParams(
+            from_pubkey=sender_pubkey,
+            to_pubkey=receiver_pubkey,
+            lamports=amount
+        )
+    ))
 
-    # Fetch recent blockhash
-    async with httpx.AsyncClient() as client:
-        response = await client.post(RPC_ENDPOINT, json={
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "getLatestBlockhash"
-        })
-    latest_blockhash = response.json()["result"]["value"]["blockhash"]
-    tx.recent_blockhash = Blockhash(latest_blockhash)
+    # Fetch latest blockhash
+    async with AsyncClient("https://testnet.fogo.io") as client:
+        resp = await client.get_latest_blockhash()
+        blockhash = resp['result']['value']['blockhash']
+
+    tx.recent_blockhash = blockhash
     tx.fee_payer = sender_pubkey
-    tx_signed = tx.sign([sender])
+    tx.sign(sender)
 
-    async with AsyncClient(RPC_ENDPOINT) as client:
-        await client.send_raw_transaction(tx_signed.serialize(), opts=TxOpts(skip_confirmation=False))
+    async with AsyncClient("https://testnet.fogo.io") as client:
+        resp = await client.send_raw_transaction(tx.serialize(), opts=TxOpts(skip_confirmation=False))
 
-# Send SPL FOGO token
+    if resp and 'result' in resp:
+        return resp['result']
+    else:
+        logger.error(f"Failed to send native FOGO tx: {resp}")
+        return None
+
+# Send SPL FOGO tokens
 async def send_fogo_spl_token(to_address: str, amount: int):
-    sender = load_faucet_keypair()
-    sender_pubkey = sender.public_key
-    receiver_pubkey = PublicKey(to_address)
+    try:
+        logger.info(f"Sending {amount / 1_000_000_000} SPL FOGO to {to_address}")
 
-    async with AsyncClient(RPC_ENDPOINT) as client:
-        # Create ATA for receiver if it doesn't exist
-        ata = get_associated_token_address(receiver_pubkey, FOGO_TOKEN_MINT)
-        resp = await client.get_account_info(ata)
-        tx = Transaction()
+        decoded_key = base58.b58decode(PRIVATE_KEY)
+        sender = SolanaKeypair.from_secret_key(decoded_key)
+        sender_pubkey = sender.public_key
+        receiver_pubkey = PublicKey(to_address)
 
-        if resp.value is None:
-            tx.add(create_associated_token_account(sender_pubkey, receiver_pubkey, FOGO_TOKEN_MINT))
+        sender_token_account = get_associated_token_address(sender_pubkey, FOGO_TOKEN_MINT)
+        receiver_token_account = get_associated_token_address(receiver_pubkey, FOGO_TOKEN_MINT)
 
-        tx.add(transfer_checked(
-            source=get_associated_token_address(sender_pubkey, FOGO_TOKEN_MINT),
-            dest=ata,
-            owner=sender_pubkey,
-            mint=FOGO_TOKEN_MINT,
-            amount=amount,
-            decimals=9
-        ))
+        async with AsyncClient("https://testnet.fogo.io") as client:
+            resp = await client.get_account_info(receiver_token_account)
+            account_exists = resp.get("result", {}).get("value") is not None
 
-        # Fetch recent blockhash
-        async with httpx.AsyncClient() as http_client:
-            response = await http_client.post(RPC_ENDPOINT, json={
+        async with httpx.AsyncClient(timeout=20.0) as http_client:
+            payload = {
                 "jsonrpc": "2.0",
                 "id": 1,
-                "method": "getLatestBlockhash"
-            })
-        latest_blockhash = response.json()["result"]["value"]["blockhash"]
-        tx.recent_blockhash = Blockhash(latest_blockhash)
+                "method": "getLatestBlockhash",
+                "params": []
+            }
+            rpc_response = await http_client.post("https://testnet.fogo.io", json=payload)
+            rpc_json = rpc_response.json()
+            latest_blockhash = rpc_json.get("result", {}).get("value", {}).get("blockhash")
+
+        if not latest_blockhash:
+            logger.error(f"Invalid blockhash response: {rpc_json}")
+            return None
+
+        tx = Transaction()
         tx.fee_payer = sender_pubkey
-        tx_signed = tx.sign([sender])
+        tx.recent_blockhash = latest_blockhash
 
-        await client.send_raw_transaction(tx_signed.serialize(), opts=TxOpts(skip_confirmation=False))
+        if not account_exists:
+            create_ata_ix = create_associated_token_account(
+                payer=sender_pubkey,
+                owner=receiver_pubkey,
+                mint=FOGO_TOKEN_MINT
+            )
+            tx.add(create_ata_ix)
 
-# Telegram handlers
-async def send_fee(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        transfer_ix = transfer_checked(
+            TransferCheckedParams(
+                program_id=TOKEN_PROGRAM_ID,
+                source=sender_token_account,
+                mint=FOGO_TOKEN_MINT,
+                dest=receiver_token_account,
+                owner=sender.public_key,
+                amount=amount,
+                decimals=DECIMALS,
+                signers=[]
+            )
+        )
+        tx.add(transfer_ix)
+        tx.sign(sender)
+        raw_tx = tx.serialize()
+
+        async with AsyncClient("https://testnet.fogo.io") as client:
+            send_resp = await client.send_raw_transaction(raw_tx, opts=TxOpts(skip_confirmation=False))
+
+        if send_resp and isinstance(send_resp, dict) and 'result' in send_resp:
+            return send_resp['result']
+        else:
+            logger.error(f"Failed to send SPL transaction: {send_resp}")
+            return None
+
+    except Exception as e:
+        logger.error(f"Critical error while sending SPL token: {e}", exc_info=True)
+        return None
+
+# Telegram command handlers
+
+# /start command
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    name = update.effective_user.first_name or "there"
+    await update.message.reply_text(
+        f"Hi {name}! I’m a FOGO Testnet faucet bot.\n"
+        "Use /send to get 0.5 SPL FOGO tokens once every 24 hours.\n"
+        "Use /send_fee to get a small amount of native FOGO once every 24 hours."
+    )
+
+# /send command: SPL FOGO
+async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if is_on_cooldown(user_id, "send_fee"):
-        await update.message.reply_text("⏳ You can only request native FOGO once every 24 hours.")
+    now = datetime.datetime.now()
+    last = get_last_request_time(user_id, "send_fogo")
+
+    if last and now - last < datetime.timedelta(hours=24):
+        remaining = datetime.timedelta(hours=24) - (now - last)
+        h, rem = divmod(int(remaining.total_seconds()), 3600)
+        m, s = divmod(rem, 60)
+        await update.message.reply_text(
+            f"You've already requested SPL FOGO within the last 24 hours.\n"
+            f"Try again in {h} hour(s), {m} minute(s), and {s} second(s)."
+        )
         return
 
-    args = context.args
-    if not args or not is_valid_solana_address(args[0]):
-        await update.message.reply_text("❌ Invalid Solana wallet address.")
+    context.user_data['waiting_for_spl_address'] = True
+    await update.message.reply_text("Please send your Solana wallet address for SPL FOGO:")
+
+# /send_fee command: native FOGO
+async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    now = datetime.datetime.now()
+    last = get_last_request_time(user_id, "send_fee")
+
+    if last and now - last < datetime.timedelta(hours=24):
+        remaining = datetime.timedelta(hours=24) - (now - last)
+        h, rem = divmod(int(remaining.total_seconds()), 3600)
+        m, s = divmod(rem, 60)
+        await update.message.reply_text(
+            f"You can only request native FOGO once every 24 hours.\n"
+            f"Try again in {h} hour(s), {m} minute(s), and {s} second(s)."
+        )
         return
 
-    try:
-        balance = await get_native_balance(args[0])
-        if balance > BALANCE_THRESHOLD:
-            await update.message.reply_text("⚠️ Wallet has more than 0.01 FOGO. Not eligible.")
+    context.user_data['waiting_for_fee_address'] = True
+    await update.message.reply_text("Please send your Solana wallet address to receive native FOGO:")
+
+# Handle text messages (wallet address input)
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    # SPL FOGO flow
+    if context.user_data.get("waiting_for_spl_address"):
+        address = update.message.text.strip()
+        context.user_data["waiting_for_spl_address"] = False
+
+        if not is_valid_solana_address(address):
+            await update.message.reply_text("Invalid wallet address. Please try again.")
             return
 
-        await send_native_fogo_fee(args[0], FEE_AMOUNT)
-        await update.message.reply_text(f"✅ Native FOGO sent to {args[0]}")
-        update_cooldown(user_id, "send_fee")
-    except Exception as e:
-        logger.error(f"Failed to send native FOGO: {e}")
-        await update.message.reply_text("❌ Error sending native FOGO.")
+        await update.message.reply_text(f"Sending {AMOUNT_TO_SEND_FOGO / 1_000_000_000} SPL FOGO to {address}...")
 
-async def send_fogo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if is_on_cooldown(user_id, "send_fogo"):
-        await update.message.reply_text("⏳ You can only request SPL FOGO once every 24 hours.")
+        tx_hash = await send_fogo_spl_token(address, AMOUNT_TO_SEND_FOGO)
+
+        if tx_hash:
+            update_last_request_time(user_id, "send_fogo", datetime.datetime.now(), address, tx_hash)
+            await update.message.reply_text(
+                f"✅ SPL FOGO sent successfully!\n"
+                f"[View transaction](https://fogoscan.com/tx/{tx_hash}?cluster=testnet)",
+                parse_mode="Markdown"
+            )
+        else:
+            await update.message.reply_text("❌ Failed to send SPL FOGO. Please try again later.")
         return
 
-    args = context.args
-    if not args or not is_valid_solana_address(args[0]):
-        await update.message.reply_text("❌ Invalid Solana wallet address.")
+    # Native FOGO flow
+    if context.user_data.get("waiting_for_fee_address"):
+        address = update.message.text.strip()
+        context.user_data["waiting_for_fee_address"] = False
+
+        if not is_valid_solana_address(address):
+            await update.message.reply_text("Invalid wallet address. Please try again.")
+            return
+
+        balance = await get_native_balance(address)
+        if balance > 10_000_000:  # 0.01 FOGO threshold, optional
+            await update.message.reply_text("Your wallet balance is above 0.01 native FOGO, not eligible for fee airdrop.")
+            return
+
+        await update.message.reply_text(f"Sending {FEE_AMOUNT / 1_000_000_000} native FOGO to {address}...")
+
+        tx_hash = await send_native_fogo(address, FEE_AMOUNT)
+
+        if tx_hash:
+            update_last_request_time(user_id, "send_fee", datetime.datetime.now(), address, tx_hash)
+            await update.message.reply_text(
+                f"✅ Native FOGO sent successfully!\n"
+                f"[View transaction](https://fogoscan.com/tx/{tx_hash}?cluster=testnet)",
+                parse_mode="Markdown"
+            )
+        else:
+            await update.message.reply_text("❌ Failed to send native FOGO. Please try again later.")
         return
 
-    try:
-        await send_fogo_spl_token(args[0], SEND_AMOUNT)
-        await update.message.reply_text(f"✅ SPL FOGO sent to {args[0]}")
-        update_cooldown(user_id, "send_fogo")
-    except Exception as e:
-        logger.error(f"Error sending token: {e}")
-        await update.message.reply_text("❌ Error sending SPL FOGO.")
+    # Nếu không chờ input địa chỉ
+    await update.message.reply_text("Use /start, /send or /send_fee commands to request tokens.")
 
-# Main
-async def run_bot():
-    token = os.getenv("BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
-    if not token:
-        raise RuntimeError("Missing BOT_TOKEN or TELEGRAM_BOT_TOKEN in environment")
+# Error handler
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.error(f"Unexpected error: {context.error}", exc_info=True)
+    if update and update.message:
+        await update.message.reply_text("An error occurred. Please try again later.")
 
-    app = Application.builder().token(token).build()
-
-    app.add_handler(CommandHandler("send_fee", send_fee))
-    app.add_handler(CommandHandler("send_fogo", send_fogo))
-
-    await app.run_polling()
-
-# Use nest_asyncio for environments with existing event loops
-import nest_asyncio
-nest_asyncio.apply()
-
+# Main run
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    try:
-        loop.run_until_complete(run_bot())
-    except KeyboardInterrupt:
-        print("Bot stopped manually.")
+    init_db()
+    app = Application.builder().token(BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("send", send_command))
+    app.add_handler(CommandHandler("send_fee", send_fee_command))
+
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_error_handler(error_handler)
+
+    app.run_polling()
