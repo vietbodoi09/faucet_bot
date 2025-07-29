@@ -95,45 +95,51 @@ async def get_native_balance(pubkey_str: str) -> int:
             return 0
         return value
 # Send native FOGO lamports
+# Send native FOGO lamports
 async def send_native_fogo(to_address: str, amount: int):
     decoded_key = base58.b58decode(PRIVATE_KEY)
     sender = SolanaKeypair.from_secret_key(decoded_key)
     sender_pubkey = sender.public_key
     receiver_pubkey = PublicKey(to_address)
 
+    tx = Transaction()
+    tx.add(transfer(
+        TransferParams(
+            from_pubkey=sender_pubkey,
+            to_pubkey=receiver_pubkey,
+            lamports=amount
+        )
+    ))
+
+    # Fetch latest blockhash with correct params
+    async with httpx.AsyncClient() as http_client:
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getLatestBlockhash",
+            "params": [{"commitment": "finalized"}]  # sửa đây
+        }
+        rpc_response = await http_client.post("https://testnet.fogo.io", json=payload)
+        rpc_json = rpc_response.json()
+        latest_blockhash = rpc_json.get("result", {}).get("value", {}).get("blockhash")
+
+    if not latest_blockhash:
+        logger.error(f"Invalid blockhash response: {rpc_json}")
+        return None
+
+    tx.recent_blockhash = latest_blockhash
+    tx.fee_payer = sender_pubkey
+    tx.sign(sender)
+
     async with AsyncClient("https://testnet.fogo.io") as client:
-        resp = await client._provider.make_request("getLatestBlockhash", [])
+        resp = await client.send_raw_transaction(tx.serialize(), opts=TxOpts(skip_confirmation=False))
 
-        logger.info(f"getLatestBlockhash response: {resp}")
+    if resp and 'result' in resp:
+        return resp['result']
+    else:
+        logger.error(f"Failed to send native FOGO tx: {resp}")
+        return None
 
-        # Kiểm tra resp có đúng định dạng không
-        if "result" not in resp or "value" not in resp["result"]:
-            logger.error(f"Invalid response from getLatestBlockhash: {resp}")
-            return None
-
-        recent_blockhash = resp["result"]["value"]["blockhash"]
-
-        tx = Transaction()
-        tx.fee_payer = sender_pubkey
-        tx.recent_blockhash = recent_blockhash
-
-        tx.add(transfer(
-            TransferParams(
-                from_pubkey=sender_pubkey,
-                to_pubkey=receiver_pubkey,
-                lamports=amount
-            )
-        ))
-
-        tx.sign(sender)
-
-        send_resp = await client.send_raw_transaction(tx.serialize(), opts=TxOpts(skip_confirmation=False))
-
-        if send_resp and 'result' in send_resp:
-            return send_resp['result']
-        else:
-            logger.error(f"Failed to send native FOGO tx: {send_resp}")
-            return None
 
 
 # Send SPL FOGO tokens
