@@ -29,6 +29,7 @@ FAUCET_KEYPAIR_PATH = "faucet.json"
 FOGO_TOKEN_MINT = PublicKey("So11111111111111111111111111111111111111112")
 SEND_AMOUNT = 1_000_000  # Adjust as needed
 FEE_AMOUNT = 100_000     # Native FOGO fee
+BALANCE_THRESHOLD = 10_000_000  # 0.01 FOGO in lamports
 
 # Logging
 logging.basicConfig(level=logging.INFO)
@@ -77,6 +78,17 @@ def is_valid_solana_address(address: str) -> bool:
     except Exception:
         return False
 
+# Check wallet native FOGO balance
+async def get_native_balance(pubkey: str) -> int:
+    async with httpx.AsyncClient() as client:
+        response = await client.post(RPC_ENDPOINT, json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getBalance",
+            "params": [pubkey]
+        })
+    return response.json()["result"]["value"]
+
 # Send native FOGO
 async def send_native_fogo_fee(to_address: str, amount: int):
     sender = load_faucet_keypair()
@@ -87,11 +99,12 @@ async def send_native_fogo_fee(to_address: str, amount: int):
     tx.add(transfer(TransferParams(from_pubkey=sender_pubkey, to_pubkey=receiver_pubkey, lamports=amount)))
 
     # Fetch recent blockhash
-    response = await httpx.post(RPC_ENDPOINT, json={
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "getLatestBlockhash"
-    })
+    async with httpx.AsyncClient() as client:
+        response = await client.post(RPC_ENDPOINT, json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getLatestBlockhash"
+        })
     latest_blockhash = response.json()["result"]["value"]["blockhash"]
     tx.recent_blockhash = Blockhash(latest_blockhash)
     tx.fee_payer = sender_pubkey
@@ -125,11 +138,12 @@ async def send_fogo_spl_token(to_address: str, amount: int):
         ))
 
         # Fetch recent blockhash
-        response = await httpx.post(RPC_ENDPOINT, json={
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "getLatestBlockhash"
-        })
+        async with httpx.AsyncClient() as http_client:
+            response = await http_client.post(RPC_ENDPOINT, json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getLatestBlockhash"
+            })
         latest_blockhash = response.json()["result"]["value"]["blockhash"]
         tx.recent_blockhash = Blockhash(latest_blockhash)
         tx.fee_payer = sender_pubkey
@@ -150,6 +164,11 @@ async def send_fee(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
+        balance = await get_native_balance(args[0])
+        if balance > BALANCE_THRESHOLD:
+            await update.message.reply_text("⚠️ Wallet has more than 0.01 FOGO. Not eligible.")
+            return
+
         await send_native_fogo_fee(args[0], FEE_AMOUNT)
         await update.message.reply_text(f"✅ Native FOGO sent to {args[0]}")
         update_cooldown(user_id, "send_fee")
