@@ -86,12 +86,11 @@ def is_valid_solana_address(address: str) -> bool:
 async def get_native_balance(pubkey_str: str) -> int:
     async with AsyncClient("https://testnet.fogo.io") as client:
         resp = await client.get_balance(PublicKey(pubkey_str))
-        data = resp.__dict__  # chuyển sang dict để debug
-        if 'result' not in resp._response or resp._response['result'] is None:
-            logger.error(f"get_balance RPC error or no result: {resp._response}")
+        logger.info(f"get_native_balance response: {resp}")
+        if resp.value is None:
+            logger.error(f"get_balance RPC returned no value: {resp}")
             return 0
-        return resp.value  # chính xác là số lamports
-
+        return resp.value
 # Send native FOGO lamports
 async def send_native_fogo(to_address: str, amount: int):
     decoded_key = base58.b58decode(PRIVATE_KEY)
