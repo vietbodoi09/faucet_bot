@@ -87,10 +87,13 @@ async def get_native_balance(pubkey_str: str) -> int:
     async with AsyncClient("https://testnet.fogo.io") as client:
         resp = await client.get_balance(PublicKey(pubkey_str))
         logger.info(f"get_native_balance response: {resp}")
-        if resp.value is None:
+
+        # resp là dict, ta lấy giá trị trong key 'result' -> 'value'
+        value = resp.get("result", {}).get("value", None)
+        if value is None:
             logger.error(f"get_balance RPC returned no value: {resp}")
             return 0
-        return resp.value
+        return value
 # Send native FOGO lamports
 async def send_native_fogo(to_address: str, amount: int):
     decoded_key = base58.b58decode(PRIVATE_KEY)
