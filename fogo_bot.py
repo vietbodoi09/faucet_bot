@@ -208,14 +208,13 @@ async def run_bot():
 
     await app.run_polling()
 
+# Use nest_asyncio for environments with existing event loops
+import nest_asyncio
+nest_asyncio.apply()
+
 if __name__ == "__main__":
+    loop = asyncio.get_event_loop()
     try:
-        asyncio.run(run_bot())
-    except RuntimeError as e:
-        if "event loop is already running" in str(e):
-            import nest_asyncio
-            nest_asyncio.apply()
-            loop = asyncio.get_event_loop()
-            loop.run_until_complete(run_bot())
-        else:
-            raise
+        loop.run_until_complete(run_bot())
+    except KeyboardInterrupt:
+        print("Bot stopped manually.")
