@@ -178,7 +178,12 @@ async def send_fogo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Main
 async def main():
-    app = Application.builder().token(os.environ["BOT_TOKEN"]).build()
+    # Support legacy env var name
+    token = os.getenv("BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
+    if not token:
+        raise RuntimeError("Missing BOT_TOKEN or TELEGRAM_BOT_TOKEN in environment")
+
+    app = Application.builder().token(token).build()
 
     app.add_handler(CommandHandler("send_fee", send_fee))
     app.add_handler(CommandHandler("send_fogo", send_fogo))
