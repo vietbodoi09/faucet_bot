@@ -35,7 +35,7 @@ if PRIVATE_KEY is None:
     raise EnvironmentError("FOGO_BOT_PRIVATE_KEY is missing.")
 
 AMOUNT_TO_SEND_FOGO = 500_000_000  # 0.5 SPL FOGO (in base units, decimals=9)
-FEE_AMOUNT = 100_000               # 0.0001 native FOGO (lamports)
+FEE_AMOUNT = 100_000_000                # 0.0001 native FOGO (lamports)
 DECIMALS = 9
 DB_PATH = "fogo_requests.db"
 
