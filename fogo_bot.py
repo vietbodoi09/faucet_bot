@@ -85,8 +85,8 @@ def is_valid_solana_address(address: str) -> bool:
 # Get native FOGO balance (lamports)
 async def get_native_balance(pubkey_str: str) -> int:
     async with AsyncClient("https://testnet.fogo.io") as client:
-        resp = await client.get_balance(PublicKey(pubkey_str))
-        return resp['result']['value'] if resp and 'result' in resp else 0
+        resp = await client._provider.make_request("getLatestBlockhash", [])
+        blockhash = resp['result']['value']['blockhash']
 
 # Send native FOGO lamports
 async def send_native_fogo(to_address: str, amount: int):
