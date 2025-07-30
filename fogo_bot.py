@@ -427,7 +427,32 @@ async def ban_wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     await update.message.reply_text(f"✅ Wallet {wallet} has been blacklisted.")
 
+# Add /banstats command to show number of blacklisted wallets and banned users
+async def banstats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    admin_ids = os.getenv("ADMIN_IDS", "").split(",")
+    if str(user_id) not in admin_ids:
+        await update.message.reply_text("❌ You are not authorized to use this command.")
+        return
 
+    wallet_count = 0
+    user_count = 0
+
+    try:
+        with open("blacklist.txt", "r") as f:
+            wallet_count = len(set(line.strip() for line in f if line.strip()))
+    except:
+        pass
+
+    try:
+        with open("banned_users.txt", "r") as f:
+            user_count = len(set(line.strip() for line in f if line.strip()))
+    except:
+        pass
+
+    await update.message.reply_text(f"🔒 Blacklisted wallets: {wallet_count}\n👤 Banned users: {user_count}")
+
+# Register handlers
 if __name__ == "__main__":
     init_db()
     app = Application.builder().token(BOT_TOKEN).build()
@@ -437,7 +462,9 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("send_fee", send_fee_command))
     app.add_handler(CommandHandler("unban", unban_command))
     app.add_handler(CommandHandler("ban", ban_wallet_command))
+    app.add_handler(CommandHandler("banstats", banstats_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(error_handler)
 
     app.run_polling()
+
