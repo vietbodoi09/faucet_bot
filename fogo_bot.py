@@ -365,6 +365,69 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update and update.message:
         await update.message.reply_text("An error occurred. Please try again later.")
 
+# Add /unban command handler for admins
+async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    admin_ids = os.getenv("ADMIN_IDS", "").split(",")
+    if str(user_id) not in admin_ids:
+        await update.message.reply_text("❌ You are not authorized to use this command.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("Usage: /unban <user_id>")
+        return
+
+    try:
+        target_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("Invalid user ID.")
+        return
+
+    if target_id not in BANNED_USERS:
+        await update.message.reply_text("User is not banned.")
+        return
+
+    BANNED_USERS.remove(target_id)
+
+    try:
+        with open("banned_users.txt", "r") as f:
+            lines = f.readlines()
+        with open("banned_users.txt", "w") as f:
+            for line in lines:
+                if line.strip() != str(target_id):
+                    f.write(line)
+    except Exception as e:
+        logger.error(f"Failed to update banned_users.txt: {e}")
+
+    await update.message.reply_text(f"✅ Unbanned user {target_id}.")
+
+# Add /ban command to block a wallet address (admin only)
+async def ban_wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    admin_ids = os.getenv("ADMIN_IDS", "").split(",")
+    if str(user_id) not in admin_ids:
+        await update.message.reply_text("❌ You are not authorized to use this command.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("Usage: /ban <wallet_address>")
+        return
+
+    wallet = context.args[0].strip()
+    if wallet in BLACKLISTED_WALLETS:
+        await update.message.reply_text("This wallet is already blacklisted.")
+        return
+
+    BLACKLISTED_WALLETS.add(wallet)
+    try:
+        with open("blacklist.txt", "a") as f:
+            f.write(wallet + "\n")
+    except Exception as e:
+        logger.error(f"Failed to write to blacklist.txt: {e}")
+
+    await update.message.reply_text(f"✅ Wallet {wallet} has been blacklisted.")
+
+
 if __name__ == "__main__":
     init_db()
     app = Application.builder().token(BOT_TOKEN).build()
@@ -372,6 +435,8 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("send", send_command))
     app.add_handler(CommandHandler("send_fee", send_fee_command))
+    app.add_handler(CommandHandler("unban", unban_command))
+    app.add_handler(CommandHandler("ban", ban_wallet_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(error_handler)
 
