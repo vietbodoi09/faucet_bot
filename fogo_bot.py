@@ -49,7 +49,22 @@ def load_blacklist(path="blacklist.txt") -> set:
         logger.warning("⚠️ blacklist.txt not found, no wallet is blacklisted.")
         return set()
 
+# Load banned users
+def load_banned_users(path="banned_users.txt") -> set:
+    try:
+        with open(path, "r") as f:
+            return set(int(line.strip()) for line in f if line.strip())
+    except FileNotFoundError:
+        logger.warning("⚠️ banned_users.txt not found, no user is banned.")
+        return set()
+
+def ban_user(user_id: int, path="banned_users.txt"):
+    with open(path, "a") as f:
+        f.write(f"{user_id}\n")
+    BANNED_USERS.add(user_id)
+
 BLACKLISTED_WALLETS = load_blacklist()
+BANNED_USERS = load_banned_users()
 
 # Database init & helpers
 def init_db():
@@ -224,6 +239,9 @@ async def send_fogo_spl_token(to_address: str, amount: int):
 
 # Telegram handlers
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id in BANNED_USERS:
+        return
     name = update.effective_user.first_name or "there"
     await update.message.reply_text(
         f"Hi {name}! I’m a FOGO Testnet faucet bot.\n"
@@ -233,6 +251,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    if user_id in BANNED_USERS:
+        return
+
     now = datetime.datetime.now()
     last = get_last_request_time(user_id, "send_fogo")
 
@@ -251,6 +272,9 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    if user_id in BANNED_USERS:
+        return
+
     now = datetime.datetime.now()
     last = get_last_request_time(user_id, "send_fee")
 
@@ -270,6 +294,9 @@ async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
+    if user_id in BANNED_USERS:
+        return
+
     if context.user_data.get("waiting_for_spl_address"):
         address = update.message.text.strip()
         context.user_data["waiting_for_spl_address"] = False
@@ -279,7 +306,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         if address in BLACKLISTED_WALLETS:
-            await update.message.reply_text("🚫 This wallet is blacklisted and cannot receive SPL FOGO.")
+            await update.message.reply_text("🚫 This wallet is blacklisted. You are now banned from using the bot.")
+            ban_user(user_id)
             return
 
         await update.message.reply_text(f"Sending {AMOUNT_TO_SEND_FOGO / 1_000_000_000} SPL FOGO to {address}...")
@@ -306,7 +334,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         if address in BLACKLISTED_WALLETS:
-            await update.message.reply_text("🚫 This wallet is blacklisted and cannot receive native FOGO.")
+            await update.message.reply_text("🚫 This wallet is blacklisted. You are now banned from using the bot.")
+            ban_user(user_id)
             return
 
         balance = await get_native_balance(address)
