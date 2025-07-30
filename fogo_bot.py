@@ -21,6 +21,7 @@ from spl.token.constants import TOKEN_PROGRAM_ID
 
 import httpx
 
+
 # Logger setup
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -35,9 +36,20 @@ if PRIVATE_KEY is None:
     raise EnvironmentError("FOGO_BOT_PRIVATE_KEY is missing.")
 
 AMOUNT_TO_SEND_FOGO = 500_000_000  # 0.5 SPL FOGO (in base units, decimals=9)
-FEE_AMOUNT = 100_000_000                # 0.0001 native FOGO (lamports)
+FEE_AMOUNT = 100_000_000          # 0.0001 native FOGO (lamports)
 DECIMALS = 9
 DB_PATH = "fogo_requests.db"
+
+# Load blacklist
+def load_blacklist(path="blacklist.txt") -> set:
+    try:
+        with open(path, "r") as f:
+            return set(line.strip() for line in f if line.strip())
+    except FileNotFoundError:
+        logger.warning("⚠️ blacklist.txt not found, no wallet is blacklisted.")
+        return set()
+
+BLACKLISTED_WALLETS = load_blacklist()
 
 # Database init & helpers
 def init_db():
@@ -74,7 +86,7 @@ def update_last_request_time(user_id, request_type, request_time, wallet, tx_has
     conn.commit()
     conn.close()
 
-# Validate Solana address (simple base58 length check)
+# Validate Solana address
 def is_valid_solana_address(address: str) -> bool:
     try:
         decoded = base58.b58decode(address)
@@ -82,20 +94,18 @@ def is_valid_solana_address(address: str) -> bool:
     except Exception:
         return False
 
-# Get native FOGO balance (lamports)
+# Get native FOGO balance
 async def get_native_balance(pubkey_str: str) -> int:
     async with AsyncClient("https://testnet.fogo.io") as client:
         resp = await client.get_balance(PublicKey(pubkey_str))
         logger.info(f"get_native_balance response: {resp}")
-
-        # resp là dict, ta lấy giá trị trong key 'result' -> 'value'
         value = resp.get("result", {}).get("value", None)
         if value is None:
             logger.error(f"get_balance RPC returned no value: {resp}")
             return 0
         return value
-# Send native FOGO lamports
-# Send native FOGO lamports
+
+# Send native FOGO
 async def send_native_fogo(to_address: str, amount: int):
     decoded_key = base58.b58decode(PRIVATE_KEY)
     sender = SolanaKeypair.from_secret_key(decoded_key)
@@ -111,13 +121,12 @@ async def send_native_fogo(to_address: str, amount: int):
         )
     ))
 
-    # Fetch latest blockhash with correct params
     async with httpx.AsyncClient() as http_client:
         payload = {
             "jsonrpc": "2.0",
             "id": 1,
             "method": "getLatestBlockhash",
-            "params": [{"commitment": "finalized"}]  # sửa đây
+            "params": [{"commitment": "finalized"}]
         }
         rpc_response = await http_client.post("https://testnet.fogo.io", json=payload)
         rpc_json = rpc_response.json()
@@ -140,9 +149,7 @@ async def send_native_fogo(to_address: str, amount: int):
         logger.error(f"Failed to send native FOGO tx: {resp}")
         return None
 
-
-
-# Send SPL FOGO tokens
+# Send SPL FOGO
 async def send_fogo_spl_token(to_address: str, amount: int):
     try:
         logger.info(f"Sending {amount / 1_000_000_000} SPL FOGO to {to_address}")
@@ -215,9 +222,7 @@ async def send_fogo_spl_token(to_address: str, amount: int):
         logger.error(f"Critical error while sending SPL token: {e}", exc_info=True)
         return None
 
-# Telegram command handlers
-
-# /start command
+# Telegram handlers
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = update.effective_user.first_name or "there"
     await update.message.reply_text(
@@ -226,7 +231,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Use /send_fee to get a small amount of native FOGO once every 24 hours."
     )
 
-# /send command: SPL FOGO
 async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     now = datetime.datetime.now()
@@ -245,7 +249,6 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['waiting_for_spl_address'] = True
     await update.message.reply_text("Please send your FOGO wallet address for SPL FOGO:")
 
-# /send_fee command: native FOGO
 async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     now = datetime.datetime.now()
@@ -264,17 +267,19 @@ async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['waiting_for_fee_address'] = True
     await update.message.reply_text("Please send your FOGO wallet address to receive native FOGO:")
 
-# Handle text messages (wallet address input)
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
-    # SPL FOGO flow
     if context.user_data.get("waiting_for_spl_address"):
         address = update.message.text.strip()
         context.user_data["waiting_for_spl_address"] = False
 
         if not is_valid_solana_address(address):
             await update.message.reply_text("Invalid wallet address. Please try again.")
+            return
+
+        if address in BLACKLISTED_WALLETS:
+            await update.message.reply_text("🚫 This wallet is blacklisted and cannot receive SPL FOGO.")
             return
 
         await update.message.reply_text(f"Sending {AMOUNT_TO_SEND_FOGO / 1_000_000_000} SPL FOGO to {address}...")
@@ -292,7 +297,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Failed to send SPL FOGO. Please try again later.")
         return
 
-    # Native FOGO flow
     if context.user_data.get("waiting_for_fee_address"):
         address = update.message.text.strip()
         context.user_data["waiting_for_fee_address"] = False
@@ -301,8 +305,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Invalid wallet address. Please try again.")
             return
 
+        if address in BLACKLISTED_WALLETS:
+            await update.message.reply_text("🚫 This wallet is blacklisted and cannot receive native FOGO.")
+            return
+
         balance = await get_native_balance(address)
-        if balance > 10_000_000:  # 0.01 FOGO threshold, optional
+        if balance > 10_000_000:
             await update.message.reply_text("Your wallet balance is above 0.01 native FOGO, not eligible for fee airdrop.")
             return
 
@@ -321,16 +329,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Failed to send native FOGO. Please try again later.")
         return
 
-    # Nếu không chờ input địa chỉ
     await update.message.reply_text("Use /start, /send or /send_fee commands to request tokens.")
 
-# Error handler
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Unexpected error: {context.error}", exc_info=True)
     if update and update.message:
         await update.message.reply_text("An error occurred. Please try again later.")
 
-# Main run
 if __name__ == "__main__":
     init_db()
     app = Application.builder().token(BOT_TOKEN).build()
@@ -338,7 +343,6 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("send", send_command))
     app.add_handler(CommandHandler("send_fee", send_fee_command))
-
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(error_handler)
 
