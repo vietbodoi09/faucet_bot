@@ -261,11 +261,9 @@ def generate_captcha():
     """
     Generates a CAPTCHA image and its corresponding text.
     Uses the 'captcha' library for better quality CAPTCHAs.
-    Note: To use 'arial.ttf' font, ensure this font file is available
-    in the same directory as the script or provide its full path.
-    Otherwise, you can omit the 'fonts' parameter to use the default font.
+    Note: Removed explicit font path to allow the library to use its default fonts.
     """
-    generator = ImageCaptcha(width=200, height=60, fonts=['./arial.ttf'])
+    generator = ImageCaptcha(width=200, height=60) # Removed fonts=['./arial.ttf']
     characters = string.ascii_uppercase + string.digits
     captcha_text = ''.join(random.choice(characters) for i in range(5)) # 5 random characters
 
