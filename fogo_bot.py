@@ -262,8 +262,9 @@ def generate_captcha():
     Generates a CAPTCHA image and its corresponding text.
     Uses the 'captcha' library for better quality CAPTCHAs.
     Note: Removed explicit font path to allow the library to use its default fonts.
+    Adjusted height to 80 for potentially better inline display in Telegram.
     """
-    generator = ImageCaptcha(width=200, height=60) # Removed fonts=['./arial.ttf']
+    generator = ImageCaptcha(width=200, height=80) # Changed height from 60 to 80
     characters = string.ascii_uppercase + string.digits
     captcha_text = ''.join(random.choice(characters) for i in range(5)) # 5 random characters
 
