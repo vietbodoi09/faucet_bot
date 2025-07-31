@@ -6,6 +6,9 @@ import logging
 import re
 import base58
 import json
+import io
+import random
+import string
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -20,7 +23,8 @@ from spl.token.instructions import TransferCheckedParams, transfer_checked, get_
 from spl.token.constants import TOKEN_PROGRAM_ID
 
 import httpx
-
+from PIL import Image, ImageDraw, ImageFont # Add Pillow library
+from captcha.image import ImageCaptcha # Add captcha library
 
 # Logger setup
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -36,7 +40,7 @@ if PRIVATE_KEY is None:
     raise EnvironmentError("FOGO_BOT_PRIVATE_KEY is missing.")
 
 AMOUNT_TO_SEND_FOGO = 500_000_000  # 0.5 SPL FOGO (in base units, decimals=9)
-FEE_AMOUNT = 100_000_000          # 0.0001 native FOGO (lamports)
+FEE_AMOUNT = 100_000_000           # 0.0001 native FOGO (lamports)
 DECIMALS = 9
 DB_PATH = "fogo_requests.db"
 
@@ -78,6 +82,21 @@ def init_db():
             wallet TEXT,
             tx_hash TEXT,
             PRIMARY KEY (user_id, request_type)
+        )
+    """)
+    # Table to store active CAPTCHA challenges
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS captcha_challenges (
+            user_id INTEGER PRIMARY KEY,
+            challenge_text TEXT,
+            timestamp TIMESTAMP
+        )
+    """)
+    # New table to store the user's last CAPTCHA solve time (for daily logic)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS user_captcha_status (
+            user_id INTEGER PRIMARY KEY,
+            last_solve_time TIMESTAMP
         )
     """)
     conn.commit()
@@ -237,6 +256,87 @@ async def send_fogo_spl_token(to_address: str, amount: int):
         logger.error(f"Critical error while sending SPL token: {e}", exc_info=True)
         return None
 
+# --- CAPTCHA Functions ---
+def generate_captcha():
+    """
+    Generates a CAPTCHA image and its corresponding text.
+    Uses the 'captcha' library for better quality CAPTCHAs.
+    Note: To use 'arial.ttf' font, ensure this font file is available
+    in the same directory as the script or provide its full path.
+    Otherwise, you can omit the 'fonts' parameter to use the default font.
+    """
+    generator = ImageCaptcha(width=200, height=60, fonts=['./arial.ttf'])
+    characters = string.ascii_uppercase + string.digits
+    captcha_text = ''.join(random.choice(characters) for i in range(5)) # 5 random characters
+
+    # Generate CAPTCHA image
+    image_data = generator.generate(captcha_text)
+
+    # Save image to memory
+    img_byte_arr = io.BytesIO(image_data.read())
+    img_byte_arr.seek(0)
+    return captcha_text, img_byte_arr
+
+def save_captcha_challenge(user_id: int, challenge_text: str):
+    """
+    Saves the active CAPTCHA challenge to the database.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("REPLACE INTO captcha_challenges (user_id, challenge_text, timestamp) VALUES (?, ?, ?)",
+              (user_id, challenge_text, datetime.datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
+
+def get_captcha_challenge(user_id: int):
+    """
+    Retrieves the active CAPTCHA challenge from the database.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT challenge_text, timestamp FROM captcha_challenges WHERE user_id = ?", (user_id,))
+    row = c.fetchone()
+    conn.close()
+    if row:
+        return row[0], datetime.datetime.fromisoformat(row[1])
+    return None, None
+
+def delete_captcha_challenge(user_id: int):
+    """
+    Deletes the active CAPTCHA challenge from the database.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("DELETE FROM captcha_challenges WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
+def update_user_captcha_solve_time(user_id: int, solve_time: datetime.datetime):
+    """
+    Updates the user's last CAPTCHA solve time in the user_captcha_status table.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("REPLACE INTO user_captcha_status (user_id, last_solve_time) VALUES (?, ?)",
+              (user_id, solve_time.isoformat()))
+    conn.commit()
+    conn.close()
+
+def get_user_captcha_solve_time(user_id: int):
+    """
+    Retrieves the user's last CAPTCHA solve time from the user_captcha_status table.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT last_solve_time FROM user_captcha_status WHERE user_id = ?", (user_id,))
+    row = c.fetchone()
+    conn.close()
+    if row:
+        return datetime.datetime.fromisoformat(row[0])
+    return None
+# --- End CAPTCHA Functions ---
+
+
 # Telegram handlers
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -246,7 +346,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"Hi {name}! I’m a FOGO Testnet faucet bot.\n"
         "Use /send to get 0.5 SPL FOGO tokens once every 24 hours.\n"
-        "Use /send_fee to get a small amount of native FOGO once every 24 hours."
+        "Use /send_fee to get a small amount of native FOGO once every 24 hours.\n"
+        "You will need to solve an image CAPTCHA daily before requesting tokens."
     )
 
 async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -255,10 +356,37 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     now = datetime.datetime.now()
-    last = get_last_request_time(user_id, "send_fogo")
+    last_captcha_solve_time = get_user_captcha_solve_time(user_id)
+    
+    # Check if a daily CAPTCHA re-solve is required
+    daily_captcha_required = True
+    if last_captcha_solve_time:
+        time_since_last_solve = now - last_captcha_solve_time
+        if time_since_last_solve < datetime.timedelta(hours=24):
+            daily_captcha_required = False # CAPTCHA re-solve not required today
 
-    if last and now - last < datetime.timedelta(hours=24):
-        remaining = datetime.timedelta(hours=24) - (now - last)
+    # If daily CAPTCHA is required OR the current session CAPTCHA hasn't been solved
+    if daily_captcha_required or not context.user_data.get('captcha_passed', False):
+        # Reset session flag if daily CAPTCHA is required
+        if daily_captcha_required:
+            context.user_data['captcha_passed'] = False
+        
+        # If current session CAPTCHA is not solved (due to daily reset or never solved)
+        if not context.user_data.get('captcha_passed', False):
+            captcha_text, captcha_image = generate_captcha()
+            save_captcha_challenge(user_id, captcha_text)
+            context.user_data['awaiting_captcha_answer'] = True # Set flag to await CAPTCHA answer
+            await update.message.reply_photo(
+                photo=captcha_image,
+                caption="Please enter the characters you see in the image to proceed (this CAPTCHA will require re-solving after 24 hours):"
+            )
+            return
+
+    # Proceed with the original flow if CAPTCHA has been passed (both session and daily)
+    last_faucet_request = get_last_request_time(user_id, "send_fogo")
+
+    if last_faucet_request and now - last_faucet_request < datetime.timedelta(hours=24):
+        remaining = datetime.timedelta(hours=24) - (now - last_faucet_request)
         h, rem = divmod(int(remaining.total_seconds()), 3600)
         m, s = divmod(rem, 60)
         await update.message.reply_text(
@@ -276,10 +404,37 @@ async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     now = datetime.datetime.now()
-    last = get_last_request_time(user_id, "send_fee")
+    last_captcha_solve_time = get_user_captcha_solve_time(user_id)
+    
+    # Check if a daily CAPTCHA re-solve is required
+    daily_captcha_required = True
+    if last_captcha_solve_time:
+        time_since_last_solve = now - last_captcha_solve_time
+        if time_since_last_solve < datetime.timedelta(hours=24):
+            daily_captcha_required = False # CAPTCHA re-solve not required today
 
-    if last and now - last < datetime.timedelta(hours=24):
-        remaining = datetime.timedelta(hours=24) - (now - last)
+    # If daily CAPTCHA is required OR the current session CAPTCHA hasn't been solved
+    if daily_captcha_required or not context.user_data.get('captcha_passed', False):
+        # Reset session flag if daily CAPTCHA is required
+        if daily_captcha_required:
+            context.user_data['captcha_passed'] = False
+        
+        # If current session CAPTCHA is not solved (due to daily reset or never solved)
+        if not context.user_data.get('captcha_passed', False):
+            captcha_text, captcha_image = generate_captcha()
+            save_captcha_challenge(user_id, captcha_text)
+            context.user_data['awaiting_captcha_answer'] = True
+            await update.message.reply_photo(
+                photo=captcha_image,
+                caption="Please enter the characters you see in the image to proceed (this CAPTCHA will require re-solving after 24 hours):"
+            )
+            return
+
+    # Proceed with the original flow if CAPTCHA has been passed (both session and daily)
+    last_faucet_request = get_last_request_time(user_id, "send_fee")
+
+    if last_faucet_request and now - last_faucet_request < datetime.timedelta(hours=24):
+        remaining = datetime.timedelta(hours=24) - (now - last_faucet_request)
         h, rem = divmod(int(remaining.total_seconds()), 3600)
         m, s = divmod(rem, 60)
         await update.message.reply_text(
@@ -297,6 +452,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id in BANNED_USERS:
         return
 
+    # --- Handle CAPTCHA first ---
+    if context.user_data.get('awaiting_captcha_answer', False):
+        user_answer = update.message.text.strip().upper() # Convert to uppercase for comparison
+
+        stored_challenge, _ = get_captcha_challenge(user_id)
+
+        if stored_challenge and user_answer == stored_challenge.upper(): # Case-insensitive comparison
+            context.user_data['captcha_passed'] = True # Set CAPTCHA passed flag for current session
+            context.user_data['awaiting_captcha_answer'] = False # Turn off awaiting answer flag
+            delete_captcha_challenge(user_id) # Delete active challenge from DB
+            update_user_captcha_solve_time(user_id, datetime.datetime.now()) # Update daily CAPTCHA solve time
+            await update.message.reply_text("✅ CAPTCHA solved successfully! You can now use /send or /send_fee commands again.")
+            return
+        else:
+            await update.message.reply_text("❌ Incorrect CAPTCHA answer. Please try again. You need to re-type /send or /send_fee to get a new CAPTCHA.")
+            context.user_data['awaiting_captcha_answer'] = False # Turn off awaiting answer flag
+            delete_captcha_challenge(user_id) # Delete old CAPTCHA to force new one on retry
+            context.user_data['captcha_passed'] = False # Reset current session CAPTCHA status
+            return
+
+    # --- Rest of handle_message (wallet address processing) ---
     if context.user_data.get("waiting_for_spl_address"):
         address = update.message.text.strip()
         context.user_data["waiting_for_spl_address"] = False
@@ -316,6 +492,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if tx_hash:
             update_last_request_time(user_id, "send_fogo", datetime.datetime.now(), address, tx_hash)
+            # captcha_passed is not reset here, as it's managed by the 24-hour logic
             await update.message.reply_text(
                 f"✅ SPL FOGO sent successfully!\n"
                 f"[View transaction](https://fogoscan.com/tx/{tx_hash}?cluster=testnet)",
@@ -349,6 +526,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if tx_hash:
             update_last_request_time(user_id, "send_fee", datetime.datetime.now(), address, tx_hash)
+            # captcha_passed is not reset here, as it's managed by the 24-hour logic
             await update.message.reply_text(
                 f"✅ Native FOGO sent successfully!\n"
                 f"[View transaction](https://fogoscan.com/tx/{tx_hash}?cluster=testnet)",
@@ -467,4 +645,3 @@ if __name__ == "__main__":
     app.add_error_handler(error_handler)
 
     app.run_polling()
-
