@@ -570,7 +570,7 @@ async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 auth = tweepy.OAuth1UserHandler(X_API_KEY, X_API_SECRET)
                 auth_url = auth.get_authorization_url()
                 context.user_data['oauth_request_token'] = auth.request_token['oauth_token']
-                context.user_data['oauth_request_token_secret'] = auth.request_token['oauth_request_token_secret']
+                context.user_data['oauth_request_token_secret'] = auth.request_token['oauth_token_secret'] # Đã sửa lỗi chính tả ở đây
                 context.user_data['awaiting_x_verifier_for_send_fee'] = True
                 
                 task_message = (
