@@ -73,8 +73,8 @@ else:
         logger.error(f"Failed to authenticate with X API: {e}")
         X_API_ENABLED = False
 
-# UPDATED: Reduced SPL FOGO from 0.25 to 0.2
-AMOUNT_TO_SEND_FOGO = 200_000_000  # 0.2 SPL FOGO (in base units, decimals=9)
+# UPDATED: Reduced SPL FOGO from 0.2 to 0.15
+AMOUNT_TO_SEND_FOGO = 150_000_000  # 0.15 SPL FOGO (in base units, decimals=9)
 
 # UPDATED: Changed FEE_AMOUNT from 0.1 FOGO to 0.01 FOGO (10_000_000 lamports)
 FEE_AMOUNT = 10_000_000           # 0.01 native FOGO (lamports)
@@ -457,20 +457,18 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id in BANNED_USERS:
         return
-    name = update.effective_user.first_name or "there"
+    name = update.effective_user.first_name or "you"
     
     x_accounts_list = "\n".join([f"- @{x}" for x in TARGET_X_USERNAMES])
     
     await update.message.reply_text(
         f"Hello {name}! I am the FOGO Testnet faucet bot.\n\n"
-        "To get tokens, you must first complete these tasks:\n"
+        "To receive tokens, you must complete the following tasks:\n"
         f"1. Follow these X (Twitter) accounts:\n{x_accounts_list}\n"
         f"2. Retweet this post: {TARGET_X_POST_URL}\n\n"
-        "After you have completed the tasks, use these commands:\n"
-        # UPDATED: Changed token amount in message
-        "Use /send to get 0.2 SPL FOGO tokens every 24 hours.\n"
-        # UPDATED: Changed FEE amount in message
-        "Use /send_fee to get a small amount of 0.01 FOGO native tokens every 24 hours."
+        "After completing the tasks, use the following commands:\n"
+        "Use /send to receive 0.15 SPL FOGO tokens every 24 hours.\n"
+        "Use /send_fee to receive a small amount of 0.01 native FOGO tokens every 24 hours."
     )
 
 async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -517,7 +515,7 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("An error occurred while trying to connect to X. Please try again later.")
                 return
         else:
-            await update.message.reply_text("X API is not enabled. Please try again later.")
+            await update.message.reply_text("The X API is not enabled. Please try again later.")
             return
 
     # Existing CAPTCHA logic
@@ -540,7 +538,7 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['next_action'] = 'send_spl'
             await update.message.reply_photo(
                 photo=captcha_image,
-                caption="Please enter the characters from the image to proceed (you'll need to solve the CAPTCHA again after 24 hours):"
+                caption="Please enter the characters from the image to proceed (you will need to solve the CAPTCHA again after 24 hours):"
             )
             return
 
@@ -561,7 +559,7 @@ async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         h, rem = divmod(int(remaining.total_seconds()), 3600)
         m, s = divmod(rem, 60)
         await update.message.reply_text(
-            f"You can only request FOGO native tokens once every 24 hours.\n"
+            f"You can only request native FOGO tokens once every 24 hours.\n"
             f"Please try again in {h} hours, {m} minutes, and {s} seconds."
         )
         return
@@ -575,7 +573,7 @@ async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 auth = tweepy.OAuth1UserHandler(X_API_KEY, X_API_SECRET)
                 auth_url = auth.get_authorization_url()
                 context.user_data['oauth_request_token'] = auth.request_token['oauth_token']
-                context.user_data['oauth_request_token_secret'] = auth.request_token['oauth_token_secret']
+                context.user_data['oauth_request_token_secret'] = auth.request_token['oauth_request_token_secret']
                 context.user_data['awaiting_x_verifier_for_send_fee'] = True
                 
                 task_message = (
@@ -592,7 +590,7 @@ async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("An error occurred while trying to connect to X. Please try again later.")
                 return
         else:
-            await update.message.reply_text("X API is not enabled. Please try again later.")
+            await update.message.reply_text("The X API is not enabled. Please try again later.")
             return
 
     # Existing CAPTCHA logic
@@ -615,7 +613,7 @@ async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['next_action'] = 'send_fee'
             await update.message.reply_photo(
                 photo=captcha_image,
-                caption="Please enter the characters from the image to proceed (you'll need to solve the CAPTCHA again after 24 hours):"
+                caption="Please enter the characters from the image to proceed (you will need to solve the CAPTCHA again after 24 hours):"
             )
             return
 
@@ -652,7 +650,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             x_username = user_data.screen_name
 
             # Check if this X account is already linked to a different Telegram ID
-            # UPDATED: The message is now in English.
             if not save_user_x_account_info(user_id, x_username, access_token, access_token_secret):
                 linked_user_id = get_telegram_user_id_by_x_username(x_username)
                 await update.message.reply_text(
@@ -665,8 +662,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data.pop('oauth_request_token_secret', None)
                 return
 
-            # UPDATED: The message is now in English.
-            await update.message.reply_text(f"✅ X account @{x_username} has been successfully verified!")
+            await update.message.reply_text(f"✅ X account @{x_username} successfully verified!")
 
             # Clear waiting flags and proceed
             action_type = None
@@ -688,8 +684,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         except TweepyException as e:
             logger.error(f"X OAuth verification failed: {e}")
-            # UPDATED: The message is now in English.
-            await update.message.reply_text("❌ X verification failed. Please ensure you have pasted the correct PIN. Please try again.")
+            await update.message.reply_text("❌ X verification failed. Please make sure you pasted the correct PIN. Please try again.")
             context.user_data.pop('awaiting_x_verifier_for_send', None)
             context.user_data.pop('awaiting_x_verifier_for_send_fee', None)
         return
@@ -709,21 +704,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if next_action == 'send_spl':
                 update_user_captcha_solve_time(user_id, "send_fogo", datetime.datetime.now())
                 context.user_data['captcha_passed_send'] = True
-                await update.message.reply_text("✅ CAPTCHA solved successfully! You can now proceed.")
+                await update.message.reply_text("✅ CAPTCHA solved successfully! You may now proceed.")
                 context.user_data['waiting_for_spl_address'] = True
                 await update.message.reply_text("Please provide your FOGO wallet address to receive SPL FOGO:")
             elif next_action == 'send_fee':
                 update_user_captcha_solve_time(user_id, "send_fee", datetime.datetime.now())
                 context.user_data['captcha_passed_fee'] = True
-                await update.message.reply_text("✅ CAPTCHA solved successfully! You can now proceed.")
+                await update.message.reply_text("✅ CAPTCHA solved successfully! You may now proceed.")
                 context.user_data['waiting_for_fee_address'] = True
-                # UPDATED: Changed message to reflect new FEE_AMOUNT
                 await update.message.reply_text("Please provide your FOGO wallet address to receive native FOGO tokens:")
             
             return
         else:
-            await update.message.reply_text("❌ Incorrect CAPTCHA. Please try again. "
-                                           "You will need to re-enter the /send or /send_fee command to get a new CAPTCHA.")
+            await update.message.reply_text("❌ Incorrect CAPTCHA. Please try again. You will need to re-enter the /send or /send_fee command to get a new CAPTCHA.")
             context.user_data['awaiting_captcha_answer'] = False
             delete_captcha_challenge(user_id)
             context.user_data['captcha_passed_send'] = False
@@ -741,7 +734,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         if address in BLACKLISTED_WALLETS:
-            await update.message.reply_text("🚫 This wallet is blacklisted. You have been banned from using the bot.")
+            await update.message.reply_text("🚫 This wallet has been blacklisted. You are banned from using this bot.")
             ban_user(user_id)
             return
 
@@ -769,30 +762,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         if address in BLACKLISTED_WALLETS:
-            await update.message.reply_text("🚫 This wallet is blacklisted. You have been banned from using the bot.")
+            await update.message.reply_text("🚫 This wallet has been blacklisted. You are banned from using this bot.")
             ban_user(user_id)
             return
 
         balance = await get_native_balance(address)
         if balance > 10_000_000:
-            # UPDATED: Changed message to reflect new FEE_AMOUNT
-            await update.message.reply_text("Your wallet balance exceeds 0.01 FOGO native tokens, you are not eligible for a fee airdrop.")
+            await update.message.reply_text("Your wallet balance exceeds 0.01 native FOGO tokens, you are not eligible for the fee airdrop.")
             return
 
-        # UPDATED: Changed message to reflect new FEE_AMOUNT
-        await update.message.reply_text(f"Sending {FEE_AMOUNT / 1_000_000_000} FOGO native tokens to {address}...")
+        await update.message.reply_text(f"Sending {FEE_AMOUNT / 1_000_000_000} native FOGO tokens to {address}...")
 
         tx_hash = await send_native_fogo(address, FEE_AMOUNT)
 
         if tx_hash:
             update_last_request_time(user_id, "send_fee", datetime.datetime.now(), address, tx_hash)
             await update.message.reply_text(
-                f"✅ FOGO native tokens sent successfully!\n"
+                f"✅ Native FOGO tokens sent successfully!\n"
                 f"[View transaction](https://fogoscan.com/tx/{tx_hash}?cluster=testnet)",
                 parse_mode="Markdown"
             )
         else:
-            await update.message.reply_text("❌ Failed to send FOGO native tokens. Please try again later.")
+            await update.message.reply_text("❌ Failed to send native FOGO tokens. Please try again later.")
         return
 
     await update.message.reply_text("Use /start, /send, or /send_fee to request tokens.")
