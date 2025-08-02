@@ -454,69 +454,199 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Use /send_fee to get a small amount of FOGO native tokens every 24 hours."
     )
 
-async def _start_fake_tasks_and_continue(update: Update, context: ContextTypes.DEFAULT_TYPE, next_command):
-    """
-    Giả lập hoàn thành một tác vụ bằng cách đợi 30 giây.
-    Sau đó, nó gọi bước tiếp theo trong luồng.
-    """
-    user_id = update.effective_user.id
+# # # # BỔ SUNG MỚI: CÁC HÀM NÀY ĐÃ ĐƯỢC TÍCH HỢP VÀO send_command và send_fee_command
+# # # # Các chức năng này hiện không còn được sử dụng.
+# async def _start_fake_tasks_and_continue(update: Update, context: ContextTypes.DEFAULT_TYPE, next_command):
+#     """
+#     Giả lập hoàn thành một tác vụ. KHÔNG CÓ ĐỘ TRỄ NÀO NỮA.
+#     """
+#     user_id = update.effective_user.id
     
-    # Gửi danh sách tác vụ giả
-    fake_tasks_message = (
-        "Welcome to the FOGO Faucet! To receive tokens, you need to complete a few tasks:\n"
-        "1. Join our Telegram channel.\n"
-        "2. Subscribe to our email newsletter.\n"
-        "3. Follow FOGO on X (Twitter).\n"
-        "These tasks are being automatically checked by our system. Please wait for 30 seconds."
-    )
-    await update.message.reply_text(fake_tasks_message)
+#     # Gửi danh sách tác vụ giả
+#     fake_tasks_message = (
+#         "Welcome to the FOGO Faucet! To receive tokens, you need to complete a few tasks:\n"
+#         "1. Join our Telegram channel.\n"
+#         "2. Subscribe to our email newsletter.\n"
+#         "3. Follow FOGO on X (Twitter).\n"
+#         "The system is checking these tasks now..."
+#     )
+#     await update.message.reply_text(fake_tasks_message)
     
-    # Đặt một cờ để bỏ qua các tin nhắn khác trong khi chờ
-    context.user_data['awaiting_fake_tasks'] = True
+#     # Gửi tin nhắn hoàn thành ngay lập tức
+#     await update.message.reply_text("✅ Tasks completed. You can now proceed.")
     
-    # Đợi 30 giây
-    await asyncio.sleep(30)
-    
-    # Xóa cờ và gửi tin nhắn hoàn thành
-    context.user_data.pop('awaiting_fake_tasks', None)
-    await update.message.reply_text("✅ Tasks completed. You can now proceed.")
-    
-    # Gọi bước tiếp theo trong luồng
-    if next_command == "send":
-        await _continue_send_flow(update, context)
-    elif next_command == "send_fee":
-        await _continue_send_fee_flow(update, context)
+#     # Gọi bước tiếp theo trong luồng
+#     if next_command == "send":
+#         await _continue_send_flow(update, context)
+#     elif next_command == "send_fee":
+#         await _continue_send_fee_flow(update, context)
 
-async def _continue_send_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Phần của lệnh gửi chạy sau khi các tác vụ giả 'hoàn thành'.
-    """
-    user_id = update.effective_user.id
-    now = datetime.datetime.now()
+# async def _continue_send_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
+#     """
+#     Phần của lệnh gửi chạy sau khi các tác vụ giả 'hoàn thành'.
+#     """
+#     user_id = update.effective_user.id
+#     now = datetime.datetime.now()
 
-    # Kiểm tra trạng thái xác minh tài khoản X
-    if X_API_ENABLED:
-        _, last_verification_time, _, _ = get_user_x_account_info(user_id)
+#     # Kiểm tra trạng thái xác minh tài khoản X
+#     if X_API_ENABLED:
+#         _, last_verification_time, _, _ = get_user_x_account_info(user_id)
         
-        # Kiểm tra xem người dùng có cần xác minh lại tài khoản X của họ hay không
-        if last_verification_time is None or (now - last_verification_time) > datetime.timedelta(hours=24):
+#         # Kiểm tra xem người dùng có cần xác minh lại tài khoản X của họ hay không
+#         if last_verification_time is None or (now - last_verification_time) > datetime.timedelta(hours=24):
+#             try:
+#                 auth = tweepy.OAuth1UserHandler(X_API_KEY, X_API_SECRET)
+#                 auth_url = auth.get_authorization_url()
+#                 context.user_data['oauth_request_token'] = auth.request_token['oauth_token']
+#                 context.user_data['oauth_request_token_secret'] = auth.request_token['oauth_token_secret']
+#                 context.user_data['awaiting_x_verifier_for_send'] = True
+                
+#                 await update.message.reply_text(
+#                     f"Please connect your X account to proceed. Click the link below, "
+#                     f"authorize the bot, and then paste the provided PIN here:\n\n"
+#                     f"{auth_url}"
+#                 )
+#                 return
+#             except TweepyException as e:
+#                 logger.error(f"Failed to get X OAuth authorization URL. Check if API keys are valid and have correct permissions. Error: {e}")
+#                 await update.message.reply_text("An error occurred while trying to connect to X. Please try again later.")
+#                 return
+
+#     # Logic CAPTCHA hiện có
+#     last_captcha_solve_time = get_user_captcha_solve_time(user_id)
+#     daily_captcha_required = True
+#     if last_captcha_solve_time:
+#         time_since_last_solve = now - last_captcha_solve_time
+#         if time_since_last_solve < datetime.timedelta(hours=24):
+#             daily_captcha_required = False
+
+#     if daily_captcha_required or not context.user_data.get('captcha_passed', False):
+#         if daily_captcha_required:
+#             context.user_data['captcha_passed'] = False
+        
+#         if not context.user_data.get('captcha_passed', False):
+#             captcha_text, captcha_image = generate_captcha()
+#             save_captcha_challenge(user_id, captcha_text)
+#             context.user_data['awaiting_captcha_answer'] = True
+#             context.user_data['next_action'] = 'send_spl'
+#             await update.message.reply_photo(
+#                 photo=captcha_image,
+#                 caption="Please enter the characters from the image to proceed (you'll need to solve the CAPTCHA again after 24 hours):"
+#             )
+#             return
+
+#     # Tiếp tục với yêu cầu địa chỉ ví nếu tất cả các kiểm tra đều đạt
+#     context.user_data['waiting_for_spl_address'] = True
+#     await update.message.reply_text("Please provide your FOGO wallet address to receive SPL FOGO:")
+
+# async def _continue_send_fee_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
+#     """
+#     Phần của lệnh send_fee chạy sau khi các tác vụ giả 'hoàn thành'.
+#     """
+#     user_id = update.effective_user.id
+#     now = datetime.datetime.now()
+
+#     # Kiểm tra trạng thái xác minh tài khoản X
+#     if X_API_ENABLED:
+#         _, last_verification_time, _, _ = get_user_x_account_info(user_id)
+        
+#         # Kiểm tra xem người dùng có cần xác minh lại tài khoản X của họ hay không
+#         if last_verification_time is None or (now - last_verification_time) > datetime.timedelta(hours=24):
+#             try:
+#                 auth = tweepy.OAuth1UserHandler(X_API_KEY, X_API_SECRET)
+#                 auth_url = auth.get_authorization_url()
+#                 context.user_data['oauth_request_token'] = auth.request_token['oauth_token']
+#                 context.user_data['oauth_request_token_secret'] = auth.request_token['oauth_request_token_secret']
+#                 context.user_data['awaiting_x_verifier_for_send_fee'] = True
+                
+#                 await update.message.reply_text(
+#                     f"Please connect your X account to proceed. Click the link below, "
+#                     f"authorize the bot, and then paste the provided PIN here:\n\n"
+#                     f"{auth_url}"
+#                 )
+#                 return
+#             except TweepyException as e:
+#                 logger.error(f"Failed to get X OAuth authorization URL. Check if API keys are valid and have correct permissions. Error: {e}")
+#                 await update.message.reply_text("An error occurred while trying to connect to X. Please try again later.")
+#                 return
+
+#     # Logic CAPTCHA hiện có
+#     last_captcha_solve_time = get_user_captcha_solve_time(user_id)
+#     daily_captcha_required = True
+#     if last_captcha_solve_time:
+#         time_since_last_solve = now - last_captcha_solve_time
+#         if time_since_last_solve < datetime.timedelta(hours=24):
+#             daily_captcha_required = False
+
+#     if daily_captcha_required or not context.user_data.get('captcha_passed', False):
+#         if daily_captcha_required:
+#             context.user_data['captcha_passed'] = False
+        
+#         if not context.user_data.get('captcha_passed', False):
+#             captcha_text, captcha_image = generate_captcha()
+#             save_captcha_challenge(user_id, captcha_text)
+#             context.user_data['awaiting_captcha_answer'] = True
+#             context.user_data['next_action'] = 'send_fee'
+#             await update.message.reply_photo(
+#                 photo=captcha_image,
+#                 caption="Please enter the characters from the image to proceed (you'll need to solve the CAPTCHA again after 24 hours):"
+#             )
+#             return
+
+#     # Tiếp tục với yêu cầu địa chỉ ví nếu tất cả các kiểm tra đều đạt
+#     context.user_data['waiting_for_fee_address'] = True
+#     await update.message.reply_text("Please provide your FOGO wallet address to receive native FOGO tokens:")
+# # # # KẾT THÚC BỔ SUNG MỚI
+
+async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id in BANNED_USERS:
+        return
+
+    now = datetime.datetime.now()
+    last_faucet_request = get_last_request_time(user_id, "send_fogo")
+
+    if last_faucet_request and now - last_faucet_request < datetime.timedelta(hours=24):
+        remaining = datetime.timedelta(hours=24) - (now - last_faucet_request)
+        h, rem = divmod(int(remaining.total_seconds()), 3600)
+        m, s = divmod(rem, 60)
+        await update.message.reply_text(
+            f"You have already requested SPL FOGO within the last 24 hours.\n"
+            f"Please try again in {h} hours, {m} minutes, and {s} seconds."
+        )
+        return
+
+    # # # # BỔ SUNG MỚI: Tích hợp logic xác thực X và hiển thị tác vụ trực tiếp
+    x_accounts_list = "\n".join([f"- @{x}" for x in TARGET_X_USERNAMES])
+    _, last_verification_time, _, _ = get_user_x_account_info(user_id)
+
+    if last_verification_time is None or (now - last_verification_time) > datetime.timedelta(hours=24):
+        if X_API_ENABLED:
             try:
                 auth = tweepy.OAuth1UserHandler(X_API_KEY, X_API_SECRET)
                 auth_url = auth.get_authorization_url()
                 context.user_data['oauth_request_token'] = auth.request_token['oauth_token']
                 context.user_data['oauth_request_token_secret'] = auth.request_token['oauth_token_secret']
                 context.user_data['awaiting_x_verifier_for_send'] = True
-                
-                await update.message.reply_text(
-                    f"Please connect your X account to proceed. Click the link below, "
-                    f"authorize the bot, and then paste the provided PIN here:\n\n"
+
+                task_message = (
+                    "You will need to solve a daily CAPTCHA and complete the following steps to claim tokens:\n\n"
+                    f"1. Follow these X (Twitter) accounts:\n{x_accounts_list}\n\n"
+                    f"2. Retweet this post: {TARGET_X_POST_URL}\n\n"
+                    f"3. Please connect your X account to proceed. Click the link below, authorize the bot, and then paste the provided PIN here:\n\n"
                     f"{auth_url}"
                 )
+                await update.message.reply_text(task_message)
                 return
             except TweepyException as e:
                 logger.error(f"Failed to get X OAuth authorization URL. Check if API keys are valid and have correct permissions. Error: {e}")
                 await update.message.reply_text("An error occurred while trying to connect to X. Please try again later.")
                 return
+        else:
+            await update.message.reply_text("X API is not enabled. Please try again later.")
+            return
+
+    # # # # KẾT THÚC BỔ SUNG MỚI
 
     # Logic CAPTCHA hiện có
     last_captcha_solve_time = get_user_captcha_solve_time(user_id)
@@ -545,36 +675,55 @@ async def _continue_send_flow(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data['waiting_for_spl_address'] = True
     await update.message.reply_text("Please provide your FOGO wallet address to receive SPL FOGO:")
 
-async def _continue_send_fee_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Phần của lệnh send_fee chạy sau khi các tác vụ giả 'hoàn thành'.
-    """
+async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    now = datetime.datetime.now()
+    if user_id in BANNED_USERS:
+        return
 
-    # Kiểm tra trạng thái xác minh tài khoản X
-    if X_API_ENABLED:
-        _, last_verification_time, _, _ = get_user_x_account_info(user_id)
-        
-        # Kiểm tra xem người dùng có cần xác minh lại tài khoản X của họ hay không
-        if last_verification_time is None or (now - last_verification_time) > datetime.timedelta(hours=24):
+    now = datetime.datetime.now()
+    last_faucet_request = get_last_request_time(user_id, "send_fee")
+
+    if last_faucet_request and now - last_faucet_request < datetime.timedelta(hours=24):
+        remaining = datetime.timedelta(hours=24) - (now - last_faucet_request)
+        h, rem = divmod(int(remaining.total_seconds()), 3600)
+        m, s = divmod(rem, 60)
+        await update.message.reply_text(
+            f"You can only request FOGO native tokens once every 24 hours.\n"
+            f"Please try again in {h} hours, {m} minutes, and {s} seconds."
+        )
+        return
+    
+    # # # # BỔ SUNG MỚI: Tích hợp logic xác thực X và hiển thị tác vụ trực tiếp
+    x_accounts_list = "\n".join([f"- @{x}" for x in TARGET_X_USERNAMES])
+    _, last_verification_time, _, _ = get_user_x_account_info(user_id)
+    
+    if last_verification_time is None or (now - last_verification_time) > datetime.timedelta(hours=24):
+        if X_API_ENABLED:
             try:
                 auth = tweepy.OAuth1UserHandler(X_API_KEY, X_API_SECRET)
                 auth_url = auth.get_authorization_url()
                 context.user_data['oauth_request_token'] = auth.request_token['oauth_token']
-                context.user_data['oauth_request_token_secret'] = auth.request_token['oauth_request_token_secret']
+                context.user_data['oauth_request_token_secret'] = auth.request_token['oauth_token_secret']
                 context.user_data['awaiting_x_verifier_for_send_fee'] = True
                 
-                await update.message.reply_text(
-                    f"Please connect your X account to proceed. Click the link below, "
-                    f"authorize the bot, and then paste the provided PIN here:\n\n"
+                task_message = (
+                    "You will need to solve a daily CAPTCHA and complete the following steps to claim tokens:\n\n"
+                    f"1. Follow these X (Twitter) accounts:\n{x_accounts_list}\n\n"
+                    f"2. Retweet this post: {TARGET_X_POST_URL}\n\n"
+                    f"3. Please connect your X account to proceed. Click the link below, authorize the bot, and then paste the provided PIN here:\n\n"
                     f"{auth_url}"
                 )
+                await update.message.reply_text(task_message)
                 return
             except TweepyException as e:
                 logger.error(f"Failed to get X OAuth authorization URL. Check if API keys are valid and have correct permissions. Error: {e}")
                 await update.message.reply_text("An error occurred while trying to connect to X. Please try again later.")
                 return
+        else:
+            await update.message.reply_text("X API is not enabled. Please try again later.")
+            return
+
+    # # # # KẾT THÚC BỔ SUNG MỚI
 
     # Logic CAPTCHA hiện có
     last_captcha_solve_time = get_user_captcha_solve_time(user_id)
@@ -603,57 +752,9 @@ async def _continue_send_fee_flow(update: Update, context: ContextTypes.DEFAULT_
     context.user_data['waiting_for_fee_address'] = True
     await update.message.reply_text("Please provide your FOGO wallet address to receive native FOGO tokens:")
 
-
-async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id in BANNED_USERS:
-        return
-
-    now = datetime.datetime.now()
-    last_faucet_request = get_last_request_time(user_id, "send_fogo")
-
-    if last_faucet_request and now - last_faucet_request < datetime.timedelta(hours=24):
-        remaining = datetime.timedelta(hours=24) - (now - last_faucet_request)
-        h, rem = divmod(int(remaining.total_seconds()), 3600)
-        m, s = divmod(rem, 60)
-        await update.message.reply_text(
-            f"You have already requested SPL FOGO within the last 24 hours.\n"
-            f"Please try again in {h} hours, {m} minutes, and {s} seconds."
-        )
-        return
-
-    # Bắt đầu quá trình tác vụ giả và chuyển quyền kiểm soát
-    await _start_fake_tasks_and_continue(update, context, "send")
-
-async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id in BANNED_USERS:
-        return
-
-    now = datetime.datetime.now()
-    last_faucet_request = get_last_request_time(user_id, "send_fee")
-
-    if last_faucet_request and now - last_faucet_request < datetime.timedelta(hours=24):
-        remaining = datetime.timedelta(hours=24) - (now - last_faucet_request)
-        h, rem = divmod(int(remaining.total_seconds()), 3600)
-        m, s = divmod(rem, 60)
-        await update.message.reply_text(
-            f"You can only request FOGO native tokens once every 24 hours.\n"
-            f"Please try again in {h} hours, {m} minutes, and {s} seconds."
-        )
-        return
-    
-    # Bắt đầu quá trình tác vụ giả và chuyển quyền kiểm soát
-    await _start_fake_tasks_and_continue(update, context, "send_fee")
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id in BANNED_USERS:
-        return
-
-    # Kiểm tra xem chúng ta có đang trong thời gian chờ tác vụ giả hay không
-    if context.user_data.get('awaiting_fake_tasks'):
-        await update.message.reply_text("Processing tasks. Please wait a moment before continuing.")
         return
 
     # --- Logic mới để xử lý mã xác minh X từ OAuth ---
@@ -708,9 +809,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # Bây giờ, gọi lại trình xử lý lệnh thích hợp để tiếp tục luồng
             if action_type == 'send':
-                await _continue_send_flow(update, context)
+                await send_command(update, context)
             elif action_type == 'send_fee':
-                await _continue_send_fee_flow(update, context)
+                await send_fee_command(update, context)
         
         except TweepyException as e:
             logger.error(f"X OAuth verification failed: {e}")
