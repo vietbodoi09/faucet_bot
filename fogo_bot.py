@@ -54,7 +54,7 @@ TARGET_X_POST_URL = "https://x.com/FogoChain/status/1951268728555053106"
 X_API_KEY = "fg5Sb5BQdqpMA6av9yIMdcxkA"
 X_API_SECRET = "sF2Orm9hw1UIWhEOMDoC3sHkoQDYNW1Zs7I9XC0Bo247YVFt9k"
 X_ACCESS_TOKEN = "1392057369769627651-NSFPv7VqLOyA6sXwOtu3PJB2UxkryG"
-X_ACCESS_TOKEN_SECRET = "6ghQP5tDb08k6pCsFq4H0l8ykZO6sMSdLC2eUUl1b3hKQ"
+X_ACCESS_TOKEN_SECRET = "6ghQP5tDb08k6pCsFqH0l8ykZO6sMSdLC2eUUl1b3hKQ"
 
 if PRIVATE_KEY is None:
     logger.critical("FOGO_BOT_PRIVATE_KEY environment variable is not set.")
@@ -62,7 +62,7 @@ if PRIVATE_KEY is None:
 
 # Check X API credentials
 if any(key is None for key in [X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET]):
-    logger.warning("X (Twitter) API credentials are not fully set. The bot will not be able to check for X follows and retweets.")
+    logger.warning("⚠️ X (Twitter) API credentials are not fully set. The bot will not be able to check for X follows and retweets.")
     X_API_ENABLED = False
 else:
     X_API_ENABLED = True
@@ -573,7 +573,8 @@ async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 auth = tweepy.OAuth1UserHandler(X_API_KEY, X_API_SECRET)
                 auth_url = auth.get_authorization_url()
                 context.user_data['oauth_request_token'] = auth.request_token['oauth_token']
-                context.user_data['oauth_request_token_secret'] = auth.request_token['oauth_request_token_secret']
+                # CORRECTED LINE: Used 'oauth_token_secret' instead of 'oauth_request_token_secret'
+                context.user_data['oauth_request_token_secret'] = auth.request_token['oauth_token_secret']
                 context.user_data['awaiting_x_verifier_for_send_fee'] = True
                 
                 task_message = (
