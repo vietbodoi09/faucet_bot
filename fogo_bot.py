@@ -404,9 +404,21 @@ def are_all_x_accounts_followed(user_x_username):
     """
     Checks if a given X username is following all TARGET_X_USERNAMES.
     Returns True if following all, False otherwise.
+    
+    The function has been updated to provide a clearer error message
+    if an account is missing or the API check fails.
+    Returns a tuple: (bool, str or None)
+    - bool: True if all accounts are followed, False otherwise.
+    - str: The username of the missing account, or None if all are followed.
     """
     if not X_API_ENABLED:
         logger.warning("X API is not enabled. Skipping follow check.")
+        return True, None
+
+    # New check: if TARGET_X_USERNAMES is empty, the check is considered passed.
+    # This prevents the bot from failing if the environment variable is not set correctly.
+    if not TARGET_X_USERNAMES:
+        logger.warning("TARGET_X_USERNAMES is empty. Skipping X follow check.")
         return True, None
 
     try:
@@ -420,8 +432,9 @@ def are_all_x_accounts_followed(user_x_username):
                 target_user = x_api_v1.get_user(screen_name=target_username)
                 target_ids[target_username] = target_user.id
             except TweepyException as e:
+                # If a target account cannot be found, it's a configuration issue.
                 logger.error(f"Error checking for target X account '{target_username}': {e}")
-                return False, target_username
+                return False, f"the target account @{target_username} was not found on X. Please contact an administrator."
 
         # Check if they are following all target accounts
         for target_username, target_id in target_ids.items():
@@ -430,10 +443,10 @@ def are_all_x_accounts_followed(user_x_username):
         return True, None # Return True and None if all are followed
     except TweepyException as e:
         logger.error(f"Error checking X follow status for {user_x_username}: {e}")
-        return False, None
+        return False, "an error occurred while checking your X account. Please try again later."
     except Exception as e:
         logger.error(f"An unexpected error occurred during X follow check: {e}")
-        return False, None
+        return False, "an unexpected error occurred. Please try again later."
 
 def has_retweeted_post(user_x_username, post_id):
     """
@@ -497,7 +510,6 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not is_verified:
             try:
                 auth = tweepy.OAuth1UserHandler(X_API_KEY, X_API_SECRET)
-                # Removed 'signin_with_x=True' as it is not a valid argument in some tweepy versions
                 auth_url = auth.get_authorization_url()
                 context.user_data['oauth_request_token'] = auth.request_token['oauth_token']
                 context.user_data['oauth_request_token_secret'] = auth.request_token['oauth_token_secret']
@@ -517,10 +529,16 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # If verified, proceed with follow check
         is_followed, missing_account = are_all_x_accounts_followed(user_x_username)
         if not is_followed:
-            await update.message.reply_text(
-                f"You are not following the account @{missing_account}. "
-                "Please follow all required accounts to receive tokens."
-            )
+            # The 'missing_account' variable now contains a specific error message or the account name
+            if missing_account.startswith("the target account"):
+                await update.message.reply_text(
+                    f"An error occurred while checking X accounts: {missing_account}"
+                )
+            else:
+                await update.message.reply_text(
+                    f"You are not following the account @{missing_account}. "
+                    "Please follow all required accounts to receive tokens."
+                )
             return
 
         # Check for retweet
@@ -582,7 +600,6 @@ async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not is_verified:
             try:
                 auth = tweepy.OAuth1UserHandler(X_API_KEY, X_API_SECRET)
-                # Removed 'signin_with_x=True' as it is not a valid argument in some tweepy versions
                 auth_url = auth.get_authorization_url()
                 context.user_data['oauth_request_token'] = auth.request_token['oauth_token']
                 context.user_data['oauth_request_token_secret'] = auth.request_token['oauth_token_secret']
@@ -602,10 +619,16 @@ async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # If verified, proceed with follow check
         is_followed, missing_account = are_all_x_accounts_followed(user_x_username)
         if not is_followed:
-            await update.message.reply_text(
-                f"You are not following the account @{missing_account}. "
-                "Please follow all required accounts to receive tokens."
-            )
+            # The 'missing_account' variable now contains a specific error message or the account name
+            if missing_account.startswith("the target account"):
+                await update.message.reply_text(
+                    f"An error occurred while checking X accounts: {missing_account}"
+                )
+            else:
+                await update.message.reply_text(
+                    f"You are not following the account @{missing_account}. "
+                    "Please follow all required accounts to receive tokens."
+                )
             return
         
         # Check for retweet
