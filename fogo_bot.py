@@ -497,7 +497,8 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not is_verified:
             try:
                 auth = tweepy.OAuth1UserHandler(X_API_KEY, X_API_SECRET)
-                auth_url = auth.get_authorization_url(signin_with_x=True)
+                # Removed 'signin_with_x=True' as it is not a valid argument in some tweepy versions
+                auth_url = auth.get_authorization_url()
                 context.user_data['oauth_request_token'] = auth.request_token['oauth_token']
                 context.user_data['oauth_request_token_secret'] = auth.request_token['oauth_token_secret']
                 context.user_data['awaiting_x_verifier_for_send'] = True
@@ -581,7 +582,8 @@ async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not is_verified:
             try:
                 auth = tweepy.OAuth1UserHandler(X_API_KEY, X_API_SECRET)
-                auth_url = auth.get_authorization_url(signin_with_x=True)
+                # Removed 'signin_with_x=True' as it is not a valid argument in some tweepy versions
+                auth_url = auth.get_authorization_url()
                 context.user_data['oauth_request_token'] = auth.request_token['oauth_token']
                 context.user_data['oauth_request_token_secret'] = auth.request_token['oauth_token_secret']
                 context.user_data['awaiting_x_verifier_for_send_fee'] = True
