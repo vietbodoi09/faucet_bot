@@ -61,10 +61,15 @@ if PRIVATE_KEY is None:
     raise EnvironmentError("FOGO_BOT_PRIVATE_KEY is missing.")
 
 # Check for X API credentials
+# NOTE: The provided API credentials do not have the required permissions (403 Forbidden error)
+# to check for user follows and retweets. The bot will be configured to not use these checks,
+# but to still verify a user's X account link.
 if any(key is None for key in [X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET]):
     logger.warning("X (Twitter) API credentials are not fully set. The bot will not be able to check for X follows and retweets.")
     X_API_ENABLED = False
 else:
+    # We still enable the API for the OAuth flow (getting a user's username)
+    # but we will bypass the checks that are failing with a 403 error.
     X_API_ENABLED = True
     try:
         auth = tweepy.OAuth1UserHandler(X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET)
@@ -399,74 +404,22 @@ def get_user_captcha_solve_time(user_id: int):
     return None
 # --- End CAPTCHA Functions ---
 
-# --- X (Twitter) Follower and Retweet Check Functions ---
+# --- X (Twitter) Follower and Retweet Check Functions (Bypassed due to API limitations) ---
 def are_all_x_accounts_followed(user_x_username):
     """
-    Checks if a given X username is following all TARGET_X_USERNAMES.
-    Returns True if following all, False otherwise.
-    
-    The function has been updated to provide a clearer error message
-    if an account is missing or the API check fails.
-    Returns a tuple: (bool, str or None)
-    - bool: True if all accounts are followed, False otherwise.
-    - str: The username of the missing account, or None if all are followed.
+    This function is now a placeholder and always returns True due to API limitations.
+    The real check for follows and retweets is not possible with the current API access level.
     """
-    if not X_API_ENABLED:
-        logger.warning("X API is not enabled. Skipping follow check.")
-        return True, None
-
-    # New check: if TARGET_X_USERNAMES is empty, the check is considered passed.
-    # This prevents the bot from failing if the environment variable is not set correctly.
-    if not TARGET_X_USERNAMES:
-        logger.warning("TARGET_X_USERNAMES is empty. Skipping X follow check.")
-        return True, None
-
-    try:
-        # Get the IDs of the users that user_x_username is following
-        following_ids = x_api_v1.get_friend_ids(screen_name=user_x_username)
-        
-        # Get the IDs of all target accounts once for efficiency
-        target_ids = {}
-        for target_username in TARGET_X_USERNAMES:
-            try:
-                target_user = x_api_v1.get_user(screen_name=target_username)
-                target_ids[target_username] = target_user.id
-            except TweepyException as e:
-                # If a target account cannot be found, it's a configuration issue.
-                logger.error(f"Error checking for target X account '{target_username}': {e}")
-                return False, f"the target account @{target_username} was not found on X. Please contact an administrator."
-
-        # Check if they are following all target accounts
-        for target_username, target_id in target_ids.items():
-            if target_id not in following_ids:
-                return False, target_username # Return False and the missing account
-        return True, None # Return True and None if all are followed
-    except TweepyException as e:
-        logger.error(f"Error checking X follow status for {user_x_username}: {e}")
-        return False, "an error occurred while checking your X account. Please try again later."
-    except Exception as e:
-        logger.error(f"An unexpected error occurred during X follow check: {e}")
-        return False, "an unexpected error occurred. Please try again later."
+    logger.warning("Bypassing X API checks due to 403 Forbidden error. User must follow manually.")
+    return True, None
 
 def has_retweeted_post(user_x_username, post_id):
     """
-    Checks if a user has retweeted a specific post.
-    Note: The current Tweepy version (v1.x) does not provide a simple way to check for likes.
+    This function is now a placeholder and always returns True due to API limitations.
+    The real check for follows and retweets is not possible with the current API access level.
     """
-    if not X_API_ENABLED:
-        logger.warning("X API is not enabled. Skipping retweet check.")
-        return True
-
-    try:
-        retweeters = x_api_v1.get_retweeters(id=post_id)
-        user_id = x_api_v1.get_user(screen_name=user_x_username).id
-        return user_id in retweeters
-    except TweepyException as e:
-        logger.error(f"Error checking retweet status for user {user_x_username} on post {post_id}: {e}")
-        return False
-    except Exception as e:
-        logger.error(f"An unexpected error occurred during X retweet check: {e}")
-        return False
+    logger.warning("Bypassing X API checks due to 403 Forbidden error. User must retweet manually.")
+    return True
 
 # Telegram handlers
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -506,7 +459,7 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Check for X account verification
     if X_API_ENABLED:
-        user_x_username, is_verified, _, _ = get_user_x_account_info(user_id)
+        _, is_verified, _, _ = get_user_x_account_info(user_id)
         if not is_verified:
             try:
                 auth = tweepy.OAuth1UserHandler(X_API_KEY, X_API_SECRET)
@@ -525,29 +478,6 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Failed to get X OAuth authorization URL: {e}")
                 await update.message.reply_text("An error occurred while trying to connect to X. Please try again later.")
                 return
-
-        # If verified, proceed with follow check
-        is_followed, missing_account = are_all_x_accounts_followed(user_x_username)
-        if not is_followed:
-            # The 'missing_account' variable now contains a specific error message or the account name
-            if missing_account.startswith("the target account"):
-                await update.message.reply_text(
-                    f"An error occurred while checking X accounts: {missing_account}"
-                )
-            else:
-                await update.message.reply_text(
-                    f"You are not following the account @{missing_account}. "
-                    "Please follow all required accounts to receive tokens."
-                )
-            return
-
-        # Check for retweet
-        if not has_retweeted_post(user_x_username, TARGET_X_POST_ID):
-            await update.message.reply_text(
-                f"You have not retweeted this post: {TARGET_X_POST_URL}\n"
-                "Please retweet the post to continue."
-            )
-            return
 
     # Existing CAPTCHA logic
     last_captcha_solve_time = get_user_captcha_solve_time(user_id)
@@ -596,7 +526,7 @@ async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Check for X account verification
     if X_API_ENABLED:
-        user_x_username, is_verified, _, _ = get_user_x_account_info(user_id)
+        _, is_verified, _, _ = get_user_x_account_info(user_id)
         if not is_verified:
             try:
                 auth = tweepy.OAuth1UserHandler(X_API_KEY, X_API_SECRET)
@@ -615,29 +545,6 @@ async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Failed to get X OAuth authorization URL: {e}")
                 await update.message.reply_text("An error occurred while trying to connect to X. Please try again later.")
                 return
-
-        # If verified, proceed with follow check
-        is_followed, missing_account = are_all_x_accounts_followed(user_x_username)
-        if not is_followed:
-            # The 'missing_account' variable now contains a specific error message or the account name
-            if missing_account.startswith("the target account"):
-                await update.message.reply_text(
-                    f"An error occurred while checking X accounts: {missing_account}"
-                )
-            else:
-                await update.message.reply_text(
-                    f"You are not following the account @{missing_account}. "
-                    "Please follow all required accounts to receive tokens."
-                )
-            return
-        
-        # Check for retweet
-        if not has_retweeted_post(user_x_username, TARGET_X_POST_ID):
-            await update.message.reply_text(
-                f"You have not retweeted this post: {TARGET_X_POST_URL}\n"
-                "Please retweet the post to continue."
-            )
-            return
 
     # Existing CAPTCHA logic
     last_captcha_solve_time = get_user_captcha_solve_time(user_id)
@@ -707,7 +614,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data.pop('oauth_request_token_secret', None)
                 return
 
-            await update.message.reply_text(f"✅ X account @{x_username} successfully verified! Checking status...")
+            await update.message.reply_text(f"✅ X account @{x_username} successfully verified!")
 
             # Clear the waiting state flags and continue
             action_type = None
