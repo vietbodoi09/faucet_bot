@@ -53,7 +53,7 @@ TARGET_X_POST_URL = "https://x.com/FogoChain/status/1951268728555053106"
 # X (Twitter) API keys
 X_API_KEY = "fg5Sb5BQdqpMA6av9yIMdcxkA"
 X_API_SECRET = "sF2Orm9hw1UIWhEOMDoC3sHkoQDYNW1Zs7I9XC0Bo247YVFt9k"
-X_ACCESS_TOKEN = "1392057369769627651-NSFPv7VqLOyA6sXwOtu3PJB2UxkryG"
+X_ACCESS_TOKEN = "1392057369769627651-NSFPv7VqLOA6sXwOtu3PJB2UxkryG"
 X_ACCESS_TOKEN_SECRET = "6ghQP5tDb08k6pCsFqH0l8ykZO6sMSdLC2eUUl1b3hKQ"
 
 if PRIVATE_KEY is None:
@@ -237,6 +237,27 @@ def save_user_x_account_info(user_id: int, x_username: str, x_access_token: str,
         logger.error(f"IntegrityError: {e}")
         conn.close()
         return False
+
+# UPDATED: Function to check if a wallet has any on-chain transaction history on Solana.
+async def is_wallet_new_on_solana(wallet_address: str) -> bool:
+    """
+    Checks if a wallet has any on-chain transaction history on the Solana mainnet.
+    Returns True if the wallet is new (no transactions), False otherwise.
+    """
+    try:
+        pubkey = PublicKey(wallet_address)
+        # Use a Solana mainnet-beta RPC endpoint for the check
+        async with AsyncClient("https://api.mainnet-beta.solana.com") as client:
+            # Use get_signatures_for_address to check for any past transactions
+            resp = await client.get_signatures_for_address(pubkey, limit=1)
+            # If there are no signatures, the list will be empty.
+            # A new wallet will have no signatures.
+            return len(resp.value) == 0
+    except Exception as e:
+        logger.error(f"Error checking on-chain history for wallet {wallet_address} on Solana: {e}")
+        # If there's an error, assume it's a valid but new wallet, or an RPC issue.
+        # It's safer to treat it as "new" to prevent abuse.
+        return True
 
 # Validate a Solana address
 def is_valid_solana_address(address: str) -> bool:
@@ -733,6 +754,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not is_valid_solana_address(address):
             await update.message.reply_text("Invalid wallet address. Please try again.")
             return
+        
+        # UPDATED: Use the new on-chain check on Solana
+        if await is_wallet_new_on_solana(address):
+            await update.message.reply_text("🚫 This wallet has no transaction history on the Solana blockchain. This faucet is intended for wallets with existing activity.")
+            return
 
         if address in BLACKLISTED_WALLETS:
             await update.message.reply_text("🚫 This wallet has been blacklisted. You are banned from using this bot.")
@@ -760,6 +786,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not is_valid_solana_address(address):
             await update.message.reply_text("Invalid wallet address. Please try again.")
+            return
+        
+        # UPDATED: Use the new on-chain check on Solana
+        if await is_wallet_new_on_solana(address):
+            await update.message.reply_text("🚫 This wallet has no transaction history on the Solana blockchain. This faucet is intended for wallets with existing activity.")
             return
 
         if address in BLACKLISTED_WALLETS:
