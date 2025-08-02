@@ -475,7 +475,7 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
             except TweepyException as e:
-                logger.error(f"Failed to get X OAuth authorization URL: {e}")
+                logger.error(f"Failed to get X OAuth authorization URL. Check if API keys are valid and have correct permissions. Error: {e}")
                 await update.message.reply_text("An error occurred while trying to connect to X. Please try again later.")
                 return
 
@@ -532,7 +532,7 @@ async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 auth = tweepy.OAuth1UserHandler(X_API_KEY, X_API_SECRET)
                 auth_url = auth.get_authorization_url()
                 context.user_data['oauth_request_token'] = auth.request_token['oauth_token']
-                context.user_data['oauth_request_token_secret'] = auth.request_token['oauth_token_secret']
+                context.user_data['oauth_request_token_secret'] = auth.request_token['oauth_request_token_secret']
                 context.user_data['awaiting_x_verifier_for_send_fee'] = True
                 
                 await update.message.reply_text(
@@ -542,7 +542,7 @@ async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
             except TweepyException as e:
-                logger.error(f"Failed to get X OAuth authorization URL: {e}")
+                logger.error(f"Failed to get X OAuth authorization URL. Check if API keys are valid and have correct permissions. Error: {e}")
                 await update.message.reply_text("An error occurred while trying to connect to X. Please try again later.")
                 return
 
