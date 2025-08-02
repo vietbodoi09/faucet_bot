@@ -243,21 +243,37 @@ async def is_wallet_new_on_solana(wallet_address: str) -> bool:
     """
     Checks if a wallet has any on-chain transaction history on the Solana mainnet.
     Returns True if the wallet is new (no transactions), False otherwise.
+    This version is more robust against unexpected RPC response formats.
     """
     try:
         pubkey = PublicKey(wallet_address)
         # Use a Solana mainnet-beta RPC endpoint for the check
         async with AsyncClient("https://api.mainnet-beta.solana.com") as client:
-            # Use get_signatures_for_address to check for any past transactions
             resp = await client.get_signatures_for_address(pubkey, limit=1)
-            # FIX: The response is a dictionary, so we need to access the 'result' and 'value' keys.
-            signatures = resp.get('result', {}).get('value', [])
-            # A new wallet will have no signatures.
-            return len(signatures) == 0
+
+            # Be defensive and check the response type and content
+            signatures = []
+            if isinstance(resp, dict) and 'result' in resp:
+                # The 'result' key's value could be a dict with 'value' key, or a list directly
+                result_value = resp['result']
+                if isinstance(result_value, dict) and 'value' in result_value:
+                    signatures = result_value['value']
+                elif isinstance(result_value, list):
+                    signatures = result_value
+            elif isinstance(resp, list):
+                # Handle the case where the top-level response is a list
+                signatures = resp
+            
+            # Finally, ensure we are working with a list before checking its length
+            if isinstance(signatures, list):
+                return len(signatures) == 0
+            else:
+                logger.warning(f"Unexpected RPC response format for {wallet_address}: {resp}")
+                return True # Assume new to be safe
+
     except Exception as e:
         logger.error(f"Error checking on-chain history for wallet {wallet_address} on Solana: {e}")
-        # If there's an error, assume it's a valid but new wallet, or an RPC issue.
-        # It's safer to treat it as "new" to prevent abuse.
+        # If there's an error, assume it's a new wallet to be safe.
         return True
 
 # Validate a Solana address
