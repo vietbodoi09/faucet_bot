@@ -30,27 +30,27 @@ from captcha.image import ImageCaptcha
 import tweepy
 from tweepy.errors import TweepyException
 
-# Logger setup
+# Cài đặt logger (Ghi nhật ký)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Constants and environment variables
+# Các hằng số và biến môi trường
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 PRIVATE_KEY = os.getenv("FOGO_BOT_PRIVATE_KEY")
 FOGO_TOKEN_MINT = PublicKey("So11111111111111111111111111111111111111112")
 
-# Updated list of target X (Twitter) accounts to be followed
+# Danh sách cập nhật các tài khoản X (Twitter) mục tiêu cần theo dõi
 TARGET_X_USERNAMES_STR = os.getenv(
     "TARGET_X_USERNAMES",
     "FogoChain,ambient_finance,ValiantTrade,RobertSagurton,catcake0907,thebookofjoey,Pyronfi"
 )
 TARGET_X_USERNAMES = [name.strip() for name in TARGET_X_USERNAMES_STR.split(',') if name.strip()]
 
-# New constant for the specific X post ID that needs to be retweeted
+# Hằng số mới cho ID bài đăng X cụ thể cần retweet
 TARGET_X_POST_ID = "1951268728555053106"
 TARGET_X_POST_URL = "https://x.com/FogoChain/status/1951268728555053106"
 
-# X (Twitter) API keys have been added
+# Các khóa API X (Twitter) đã được thêm
 X_API_KEY = "fg5Sb5BQdqpMA6av9yIMdcxkA"
 X_API_SECRET = "sF2Orm9hw1UIWhEOMDoC3sHkoQDYNW1Zs7I9XC0Bo247YVFt9k"
 X_ACCESS_TOKEN = "1392057369769627651-NSFPv7VqLOyA6sXwOtu3PJB2UxkryG"
@@ -60,16 +60,13 @@ if PRIVATE_KEY is None:
     logger.critical("FOGO_BOT_PRIVATE_KEY environment variable is not set.")
     raise EnvironmentError("FOGO_BOT_PRIVATE_KEY is missing.")
 
-# Check for X API credentials
-# NOTE: The provided API credentials do not have the required permissions (403 Forbidden error)
-# to check for user follows and retweets. The bot will be configured to not use these checks,
-# but to still verify a user's X account link.
+# Kiểm tra thông tin đăng nhập X API
 if any(key is None for key in [X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET]):
     logger.warning("X (Twitter) API credentials are not fully set. The bot will not be able to check for X follows and retweets.")
     X_API_ENABLED = False
 else:
-    # We still enable the API for the OAuth flow (getting a user's username)
-    # but we will bypass the checks that are failing with a 403 error.
+    # Chúng tôi vẫn bật API cho luồng OAuth (lấy tên người dùng của người dùng)
+    # nhưng chúng tôi sẽ bỏ qua các kiểm tra đang gặp lỗi 403.
     X_API_ENABLED = True
     try:
         auth = tweepy.OAuth1UserHandler(X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET)
@@ -83,7 +80,7 @@ FEE_AMOUNT = 100_000_000           # 0.0001 native FOGO (lamports)
 DECIMALS = 9
 DB_PATH = "fogo_requests.db"
 
-# Load blacklist
+# Tải danh sách đen
 def load_blacklist(path="blacklist.txt") -> set:
     try:
         with open(path, "r") as f:
@@ -92,7 +89,7 @@ def load_blacklist(path="blacklist.txt") -> set:
         logger.warning("⚠️ blacklist.txt not found, no wallet is blacklisted.")
         return set()
 
-# Load banned users
+# Tải người dùng bị cấm
 def load_banned_users(path="banned_users.txt") -> set:
     try:
         with open(path, "r") as f:
@@ -109,7 +106,7 @@ def ban_user(user_id: int, path="banned_users.txt"):
 BLACKLISTED_WALLETS = load_blacklist()
 BANNED_USERS = load_banned_users()
 
-# Database init & helpers
+# Khởi tạo DB & hỗ trợ
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -136,8 +133,8 @@ def init_db():
             last_solve_time TIMESTAMP
         )
     """)
-    # New table to store user's X (Twitter) username and OAuth tokens
-    # Added a last_verification_time column to enforce 24h re-verification
+    # Bảng mới để lưu tên người dùng X (Twitter) và mã thông báo OAuth của người dùng
+    # Đã thêm cột last_verification_time để thực thi xác minh lại sau 24h
     c.execute("""
         CREATE TABLE IF NOT EXISTS user_x_accounts (
             user_id INTEGER PRIMARY KEY,
@@ -147,6 +144,19 @@ def init_db():
             last_verification_time TIMESTAMP
         )
     """)
+
+    # --- BỔ SUNG MỚI ĐỂ XỬ LÝ LỖI 'no such column' ---
+    # Thêm cột 'last_verification_time' nếu nó chưa tồn tại.
+    try:
+        c.execute("ALTER TABLE user_x_accounts ADD COLUMN last_verification_time TIMESTAMP")
+        logger.info("Đã thêm cột 'last_verification_time' vào bảng 'user_x_accounts'.")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" in str(e):
+            logger.info("Cột 'last_verification_time' đã tồn tại. Không cần thay đổi.")
+        else:
+            logger.error(f"Lỗi khi thêm cột: {e}")
+    # --- KẾT THÚC BỔ SUNG MỚI ---
+
     conn.commit()
     conn.close()
 
@@ -171,18 +181,18 @@ def update_last_request_time(user_id, request_type, request_time, wallet, tx_has
 def get_user_x_account_info(user_id: int):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    # Now retrieve the last_verification_time instead of a boolean flag
+    # Bây giờ lấy last_verification_time thay vì một cờ boolean
     c.execute("SELECT x_username, last_verification_time, x_access_token, x_access_token_secret FROM user_x_accounts WHERE user_id = ?", (user_id,))
     row = c.fetchone()
     conn.close()
     if row:
-        # Check if last_verification_time is not None before converting
+        # Kiểm tra nếu last_verification_time không phải None trước khi chuyển đổi
         last_verification_time = datetime.datetime.fromisoformat(row[1]) if row[1] else None
         return row[0], last_verification_time, row[2], row[3]
     return None, None, None, None
 
 def get_telegram_user_id_by_x_username(x_username: str):
-    """Retrieves the Telegram user_id associated with a given X username."""
+    """Lấy user_id Telegram được liên kết với một tên người dùng X đã cho."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT user_id FROM user_x_accounts WHERE x_username = ?", (x_username,))
@@ -194,13 +204,13 @@ def get_telegram_user_id_by_x_username(x_username: str):
 
 def save_user_x_account_info(user_id: int, x_username: str, x_access_token: str, x_access_token_secret: str):
     """
-    Saves the user's X account info and the current timestamp for verification.
-    Returns True on success, False if the X account is already linked to another Telegram ID.
+    Lưu thông tin tài khoản X của người dùng và dấu thời gian hiện tại để xác minh.
+    Trả về True khi thành công, False nếu tài khoản X đã được liên kết với một ID Telegram khác.
     """
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     try:
-        # Save the current time as the last verification time
+        # Lưu thời gian hiện tại làm thời gian xác minh cuối cùng
         c.execute("REPLACE INTO user_x_accounts (user_id, x_username, x_access_token, x_access_token_secret, last_verification_time) VALUES (?, ?, ?, ?, ?)",
                   (user_id, x_username, x_access_token, x_access_token_secret, datetime.datetime.now().isoformat()))
         conn.commit()
@@ -211,7 +221,7 @@ def save_user_x_account_info(user_id: int, x_username: str, x_access_token: str,
         conn.close()
         return False
 
-# Validate Solana address
+# Xác thực địa chỉ Solana
 def is_valid_solana_address(address: str) -> bool:
     try:
         decoded = base58.b58decode(address)
@@ -219,7 +229,7 @@ def is_valid_solana_address(address: str) -> bool:
     except Exception:
         return False
 
-# Get native FOGO balance
+# Lấy số dư FOGO gốc
 async def get_native_balance(pubkey_str: str) -> int:
     async with AsyncClient("https://testnet.fogo.io") as client:
         resp = await client.get_balance(PublicKey(pubkey_str))
@@ -230,7 +240,7 @@ async def get_native_balance(pubkey_str: str) -> int:
             return 0
         return value
 
-# Send native FOGO
+# Gửi FOGO gốc
 async def send_native_fogo(to_address: str, amount: int):
     decoded_key = base58.b58decode(PRIVATE_KEY)
     sender = SolanaKeypair.from_secret_key(decoded_key)
@@ -274,7 +284,7 @@ async def send_native_fogo(to_address: str, amount: int):
         logger.error(f"Failed to send native FOGO tx: {resp}")
         return None
 
-# Send SPL FOGO
+# Gửi SPL FOGO
 async def send_fogo_spl_token(to_address: str, amount: int):
     try:
         logger.info(f"Sending {amount / 1_000_000_000} SPL FOGO to {to_address}")
@@ -347,9 +357,9 @@ async def send_fogo_spl_token(to_address: str, amount: int):
         logger.error(f"Critical error while sending SPL token: {e}", exc_info=True)
         return None
 
-# --- CAPTCHA Functions ---
+# --- Chức năng CAPTCHA ---
 def generate_captcha():
-    """Generates a CAPTCHA image and its corresponding text."""
+    """Tạo một hình ảnh CAPTCHA và văn bản tương ứng."""
     generator = ImageCaptcha(width=200, height=80)
     characters = string.ascii_uppercase + string.digits
     captcha_text = ''.join(random.choice(characters) for i in range(5))
@@ -360,7 +370,7 @@ def generate_captcha():
     return captcha_text, img_byte_arr
 
 def save_captcha_challenge(user_id: int, challenge_text: str):
-    """Saves the active CAPTCHA challenge to the database."""
+    """Lưu thử thách CAPTCHA đang hoạt động vào cơ sở dữ liệu."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("REPLACE INTO captcha_challenges (user_id, challenge_text, timestamp) VALUES (?, ?, ?)",
@@ -369,7 +379,7 @@ def save_captcha_challenge(user_id: int, challenge_text: str):
     conn.close()
 
 def get_captcha_challenge(user_id: int):
-    """Retrieves the active CAPTCHA challenge from the database."""
+    """Lấy thử thách CAPTCHA đang hoạt động từ cơ sở dữ liệu."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT challenge_text, timestamp FROM captcha_challenges WHERE user_id = ?", (user_id,))
@@ -380,7 +390,7 @@ def get_captcha_challenge(user_id: int):
     return None, None
 
 def delete_captcha_challenge(user_id: int):
-    """Deletes the active CAPTCHA challenge from the database."""
+    """Xóa thử thách CAPTCHA đang hoạt động khỏi cơ sở dữ liệu."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("DELETE FROM captcha_challenges WHERE user_id = ?", (user_id,))
@@ -388,7 +398,7 @@ def delete_captcha_challenge(user_id: int):
     conn.close()
 
 def update_user_captcha_solve_time(user_id: int, solve_time: datetime.datetime):
-    """Updates the user's last CAPTCHA solve time in the user_captcha_status table."""
+    """Cập nhật thời gian giải CAPTCHA cuối cùng của người dùng trong bảng user_captcha_status."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("REPLACE INTO user_captcha_status (user_id, last_solve_time) VALUES (?, ?)",
@@ -397,7 +407,7 @@ def update_user_captcha_solve_time(user_id: int, solve_time: datetime.datetime):
     conn.close()
 
 def get_user_captcha_solve_time(user_id: int):
-    """Retrieves the user's last CAPTCHA solve time from the user_captcha_status table."""
+    """Lấy thời gian giải CAPTCHA cuối cùng của người dùng từ bảng user_captcha_status."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT last_solve_time FROM user_captcha_status WHERE user_id = ?", (user_id,))
@@ -406,26 +416,26 @@ def get_user_captcha_solve_time(user_id: int):
     if row:
         return datetime.datetime.fromisoformat(row[0])
     return None
-# --- End CAPTCHA Functions ---
+# --- Kết thúc Chức năng CAPTCHA ---
 
-# --- X (Twitter) Follower and Retweet Check Functions (Bypassed due to API limitations) ---
+# --- Chức năng kiểm tra người theo dõi và retweet X (Twitter) (Đã bị bỏ qua do giới hạn API) ---
 def are_all_x_accounts_followed(user_x_username):
     """
-    This function is now a placeholder and always returns True due to API limitations.
-    The real check for follows and retweets is not possible with the current API access level.
+    Chức năng này hiện là trình giữ chỗ và luôn trả về True do giới hạn API.
+    Việc kiểm tra thực sự đối với việc theo dõi và retweet là không thể với cấp độ truy cập API hiện tại.
     """
     logger.warning("Bypassing X API checks due to 403 Forbidden error. User must follow manually.")
     return True, None
 
 def has_retweeted_post(user_x_username, post_id):
     """
-    This function is now a placeholder and always returns True due to API limitations.
-    The real check for follows and retweets is not possible with the current API access level.
+    Chức năng này hiện là trình giữ chỗ và luôn trả về True do giới hạn API.
+    Việc kiểm tra thực sự đối với việc theo dõi và retweet là không thể với cấp độ truy cập API hiện tại.
     """
     logger.warning("Bypassing X API checks due to 403 Forbidden error. User must retweet manually.")
     return True
 
-# Telegram handlers
+# Xử lý Telegram
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id in BANNED_USERS:
@@ -446,12 +456,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def _start_fake_tasks_and_continue(update: Update, context: ContextTypes.DEFAULT_TYPE, next_command):
     """
-    Simulates a fake task completion by waiting for 30 seconds.
-    Then, it calls the next step in the flow.
+    Giả lập hoàn thành một tác vụ bằng cách đợi 30 giây.
+    Sau đó, nó gọi bước tiếp theo trong luồng.
     """
     user_id = update.effective_user.id
     
-    # Send fake task list
+    # Gửi danh sách tác vụ giả
     fake_tasks_message = (
         "Welcome to the FOGO Faucet! To receive tokens, you need to complete a few tasks:\n"
         "1. Join our Telegram channel.\n"
@@ -461,17 +471,17 @@ async def _start_fake_tasks_and_continue(update: Update, context: ContextTypes.D
     )
     await update.message.reply_text(fake_tasks_message)
     
-    # Set a flag to ignore other messages while waiting
+    # Đặt một cờ để bỏ qua các tin nhắn khác trong khi chờ
     context.user_data['awaiting_fake_tasks'] = True
     
-    # Wait for 30 seconds
+    # Đợi 30 giây
     await asyncio.sleep(30)
     
-    # Clear the flag and send a completion message
+    # Xóa cờ và gửi tin nhắn hoàn thành
     context.user_data.pop('awaiting_fake_tasks', None)
     await update.message.reply_text("✅ Tasks completed. You can now proceed.")
     
-    # Call the next step in the flow
+    # Gọi bước tiếp theo trong luồng
     if next_command == "send":
         await _continue_send_flow(update, context)
     elif next_command == "send_fee":
@@ -479,16 +489,16 @@ async def _start_fake_tasks_and_continue(update: Update, context: ContextTypes.D
 
 async def _continue_send_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    The part of the send command that runs after the fake tasks are 'complete'.
+    Phần của lệnh gửi chạy sau khi các tác vụ giả 'hoàn thành'.
     """
     user_id = update.effective_user.id
     now = datetime.datetime.now()
 
-    # Check for X account verification status
+    # Kiểm tra trạng thái xác minh tài khoản X
     if X_API_ENABLED:
         _, last_verification_time, _, _ = get_user_x_account_info(user_id)
         
-        # Check if the user needs to re-verify their X account
+        # Kiểm tra xem người dùng có cần xác minh lại tài khoản X của họ hay không
         if last_verification_time is None or (now - last_verification_time) > datetime.timedelta(hours=24):
             try:
                 auth = tweepy.OAuth1UserHandler(X_API_KEY, X_API_SECRET)
@@ -508,7 +518,7 @@ async def _continue_send_flow(update: Update, context: ContextTypes.DEFAULT_TYPE
                 await update.message.reply_text("An error occurred while trying to connect to X. Please try again later.")
                 return
 
-    # Existing CAPTCHA logic
+    # Logic CAPTCHA hiện có
     last_captcha_solve_time = get_user_captcha_solve_time(user_id)
     daily_captcha_required = True
     if last_captcha_solve_time:
@@ -531,22 +541,22 @@ async def _continue_send_flow(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
             return
 
-    # Proceed with wallet address request if all checks pass
+    # Tiếp tục với yêu cầu địa chỉ ví nếu tất cả các kiểm tra đều đạt
     context.user_data['waiting_for_spl_address'] = True
     await update.message.reply_text("Please provide your FOGO wallet address to receive SPL FOGO:")
 
 async def _continue_send_fee_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    The part of the send_fee command that runs after the fake tasks are 'complete'.
+    Phần của lệnh send_fee chạy sau khi các tác vụ giả 'hoàn thành'.
     """
     user_id = update.effective_user.id
     now = datetime.datetime.now()
 
-    # Check for X account verification status
+    # Kiểm tra trạng thái xác minh tài khoản X
     if X_API_ENABLED:
         _, last_verification_time, _, _ = get_user_x_account_info(user_id)
         
-        # Check if the user needs to re-verify their X account
+        # Kiểm tra xem người dùng có cần xác minh lại tài khoản X của họ hay không
         if last_verification_time is None or (now - last_verification_time) > datetime.timedelta(hours=24):
             try:
                 auth = tweepy.OAuth1UserHandler(X_API_KEY, X_API_SECRET)
@@ -566,7 +576,7 @@ async def _continue_send_fee_flow(update: Update, context: ContextTypes.DEFAULT_
                 await update.message.reply_text("An error occurred while trying to connect to X. Please try again later.")
                 return
 
-    # Existing CAPTCHA logic
+    # Logic CAPTCHA hiện có
     last_captcha_solve_time = get_user_captcha_solve_time(user_id)
     daily_captcha_required = True
     if last_captcha_solve_time:
@@ -589,7 +599,7 @@ async def _continue_send_fee_flow(update: Update, context: ContextTypes.DEFAULT_
             )
             return
 
-    # Proceed with wallet address request if all checks pass
+    # Tiếp tục với yêu cầu địa chỉ ví nếu tất cả các kiểm tra đều đạt
     context.user_data['waiting_for_fee_address'] = True
     await update.message.reply_text("Please provide your FOGO wallet address to receive native FOGO tokens:")
 
@@ -612,7 +622,7 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Start the fake tasks process and pass control
+    # Bắt đầu quá trình tác vụ giả và chuyển quyền kiểm soát
     await _start_fake_tasks_and_continue(update, context, "send")
 
 async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -633,7 +643,7 @@ async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Start the fake tasks process and pass control
+    # Bắt đầu quá trình tác vụ giả và chuyển quyền kiểm soát
     await _start_fake_tasks_and_continue(update, context, "send_fee")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -641,12 +651,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id in BANNED_USERS:
         return
 
-    # Check if we are currently in the fake task waiting period
+    # Kiểm tra xem chúng ta có đang trong thời gian chờ tác vụ giả hay không
     if context.user_data.get('awaiting_fake_tasks'):
         await update.message.reply_text("Processing tasks. Please wait a moment before continuing.")
         return
 
-    # --- New logic to handle X verifier code from OAuth ---
+    # --- Logic mới để xử lý mã xác minh X từ OAuth ---
     if context.user_data.get('awaiting_x_verifier_for_send') or context.user_data.get('awaiting_x_verifier_for_send_fee'):
         verifier = update.message.text.strip()
         request_token = context.user_data.get('oauth_request_token')
@@ -663,14 +673,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             auth.request_token = {'oauth_token': request_token, 'oauth_token_secret': request_token_secret}
             access_token, access_token_secret = auth.get_access_token(verifier)
             
-            # Use the access token to get user info
+            # Sử dụng mã thông báo truy cập để lấy thông tin người dùng
             auth_v1 = tweepy.OAuth1UserHandler(X_API_KEY, X_API_SECRET, access_token, access_token_secret)
             api = tweepy.API(auth_v1)
             user_data = api.verify_credentials()
             x_username = user_data.screen_name
 
-            # Check if this X account is already linked to another Telegram ID
-            # This check is now based on the unique x_username constraint
+            # Kiểm tra xem tài khoản X này đã được liên kết với một ID Telegram khác hay chưa
             if not save_user_x_account_info(user_id, x_username, access_token, access_token_secret):
                 linked_user_id = get_telegram_user_id_by_x_username(x_username)
                 await update.message.reply_text(
@@ -685,7 +694,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await update.message.reply_text(f"✅ X account @{x_username} successfully verified!")
 
-            # Clear the waiting state flags and continue
+            # Xóa các cờ trạng thái chờ và tiếp tục
             action_type = None
             if context.user_data.get('awaiting_x_verifier_for_send'):
                 context.user_data.pop('awaiting_x_verifier_for_send', None)
@@ -697,7 +706,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop('oauth_request_token', None)
             context.user_data.pop('oauth_request_token_secret', None)
             
-            # Now, re-call the appropriate command handler to continue the flow
+            # Bây giờ, gọi lại trình xử lý lệnh thích hợp để tiếp tục luồng
             if action_type == 'send':
                 await _continue_send_flow(update, context)
             elif action_type == 'send_fee':
@@ -710,7 +719,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop('awaiting_x_verifier_for_send_fee', None)
         return
 
-    # --- Handle CAPTCHA first ---
+    # --- Xử lý CAPTCHA trước tiên ---
     if context.user_data.get('awaiting_captcha_answer', False):
         user_answer = update.message.text.strip().upper()
 
@@ -723,7 +732,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update_user_captcha_solve_time(user_id, datetime.datetime.now())
             await update.message.reply_text("✅ CAPTCHA solved successfully! You can now proceed.")
             
-            # Continue the original flow based on stored 'next_action'
+            # Tiếp tục luồng ban đầu dựa trên 'next_action' đã lưu
             next_action = context.user_data.pop('next_action', None)
             if next_action == 'send_spl':
                 context.user_data['waiting_for_spl_address'] = True
@@ -741,7 +750,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop('next_action', None)
             return
 
-    # --- Rest of handle_message (wallet address processing) ---
+    # --- Phần còn lại của handle_message (xử lý địa chỉ ví) ---
     if context.user_data.get("waiting_for_spl_address"):
         address = update.message.text.strip()
         context.user_data["waiting_for_spl_address"] = False
@@ -810,7 +819,7 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update and update.message:
         await update.message.reply_text("An error occurred. Please try again later.")
 
-# Add /unban command handler for admins
+# Thêm trình xử lý lệnh /unban cho quản trị viên
 async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     admin_ids = os.getenv("ADMIN_IDS", "").split(",")
@@ -846,7 +855,7 @@ async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(f"✅ User {target_id} has been unbanned.")
 
-# Add /ban command to block a wallet address (admin only)
+# Thêm lệnh /ban để chặn một địa chỉ ví (chỉ dành cho quản trị viên)
 async def ban_wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     admin_ids = os.getenv("ADMIN_IDS", "").split(",")
@@ -872,7 +881,7 @@ async def ban_wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     await update.message.reply_text(f"✅ Wallet {wallet} has been blacklisted.")
 
-# Add /banstats command to show number of blacklisted wallets and banned users
+# Thêm lệnh /banstats để hiển thị số lượng ví trong danh sách đen và người dùng bị cấm
 async def banstats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     admin_ids = os.getenv("ADMIN_IDS", "").split(",")
@@ -897,7 +906,7 @@ async def banstats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(f"🔒 Blacklisted wallets: {wallet_count}\n👤 Banned users: {user_count}")
 
-# Register handlers
+# Đăng ký trình xử lý
 if __name__ == "__main__":
     init_db()
     app = Application.builder().token(BOT_TOKEN).build()
