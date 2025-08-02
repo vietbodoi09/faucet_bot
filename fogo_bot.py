@@ -250,9 +250,10 @@ async def is_wallet_new_on_solana(wallet_address: str) -> bool:
         async with AsyncClient("https://api.mainnet-beta.solana.com") as client:
             # Use get_signatures_for_address to check for any past transactions
             resp = await client.get_signatures_for_address(pubkey, limit=1)
-            # If there are no signatures, the list will be empty.
+            # FIX: The response is a dictionary, so we need to access the 'result' and 'value' keys.
+            signatures = resp.get('result', {}).get('value', [])
             # A new wallet will have no signatures.
-            return len(resp.value) == 0
+            return len(signatures) == 0
     except Exception as e:
         logger.error(f"Error checking on-chain history for wallet {wallet_address} on Solana: {e}")
         # If there's an error, assume it's a valid but new wallet, or an RPC issue.
