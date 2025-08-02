@@ -73,7 +73,7 @@ else:
         logger.error(f"Failed to authenticate with X API: {e}")
         X_API_ENABLED = False
 
-AMOUNT_TO_SEND_FOGO = 100_000_000  # 0.1 SPL FOGO (in base units, decimals=9)
+AMOUNT_TO_SEND_FOGO = 250_000_000  # 0.25 SPL FOGO (in base units, decimals=9)
 FEE_AMOUNT = 100_000_000           # 0.0001 native FOGO (lamports)
 DECIMALS = 9
 DB_PATH = "fogo_requests.db"
@@ -479,7 +479,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(
         f"Hello {name}! I am the FOGO Testnet faucet bot.\n"
-        "Use /send to get 0.1 SPL FOGO tokens every 24 hours.\n"
+        "Use /send to get 0.25 SPL FOGO tokens every 24 hours.\n"
         "Use /send_fee to get a small amount of native FOGO tokens every 24 hours.\n"
         "You will need to solve a daily CAPTCHA and complete the following steps to claim tokens:\n"
         f"1. Follow these X (Twitter) accounts:\n{x_accounts_list}\n"
