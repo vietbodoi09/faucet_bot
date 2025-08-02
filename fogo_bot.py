@@ -412,6 +412,7 @@ def get_user_captcha_solve_time(user_id: int, request_type: str):
     """Lấy thời gian giải CAPTCHA cuối cùng của người dùng cho một loại yêu cầu cụ thể."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
+    # Sửa lỗi chính tả cột ở đây
     c.execute("SELECT last_solve_time FROM user_captcha_status WHERE user_id = ? AND request_type = ?", (user_id, request_type))
     row = c.fetchone()
     conn.close()
