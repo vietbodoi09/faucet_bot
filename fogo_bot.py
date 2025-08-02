@@ -158,6 +158,16 @@ def init_db():
             logger.info("Cột 'last_verification_time' đã tồn tại. Không cần thay đổi.")
         else:
             logger.error(f"Lỗi khi thêm cột: {e}")
+            
+    # Bổ sung: Kiểm tra và thêm cột 'request_type' vào user_captcha_status
+    c.execute("PRAGMA table_info(user_captcha_status)")
+    columns = [column[1] for column in c.fetchall()]
+    if "request_type" not in columns:
+        logger.info("'request_type' column not found in user_captcha_status. Adding it now...")
+        c.execute("ALTER TABLE user_captcha_status ADD COLUMN request_type TEXT DEFAULT 'default_type'")
+        logger.info("'request_type' column added successfully.")
+    else:
+        logger.info("'request_type' column already exists. No changes were made.")
 
     conn.commit()
     conn.close()
