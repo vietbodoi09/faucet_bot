@@ -50,7 +50,7 @@ TARGET_X_USERNAMES = [name.strip() for name in TARGET_X_USERNAMES_STR.split(',')
 TARGET_X_POST_ID = "1951268728555053106"
 TARGET_X_POST_URL = "https://x.com/FogoChain/status/1951268728555053106"
 
-# Khóa API X (Twitter) đã được thêm
+# X (Twitter) API keys have been added
 X_API_KEY = "fg5Sb5BQdqpMA6av9yIMdcxkA"
 X_API_SECRET = "sF2Orm9hw1UIWhEOMDoC3sHkoQDYNW1Zs7I9XC0Bo247YVFt9k"
 X_ACCESS_TOKEN = "1392057369769627651-NSFPv7VqLOyA6sXwOtu3PJB2UxkryG"
@@ -435,12 +435,13 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     x_accounts_list = "\n".join([f"- @{x}" for x in TARGET_X_USERNAMES])
     
     await update.message.reply_text(
-        f"Xin chào {name}! Tôi là bot faucet FOGO Testnet.\n"
-        "Sử dụng /send để nhận 0.25 SPL FOGO token mỗi 24 giờ.\n"
-        "Sử dụng /send_fee để nhận một lượng nhỏ FOGO native token mỗi 24 giờ.\n"
-        "Bạn sẽ cần phải giải CAPTCHA hàng ngày và hoàn thành các bước sau để nhận token:\n"
-        f"1. Theo dõi các tài khoản X (Twitter) sau:\n{x_accounts_list}\n"
-        f"2. Retweet bài viết này: {TARGET_X_POST_URL}"
+        f"Hello {name}! I am the FOGO Testnet faucet bot.\n\n"
+        "To get tokens, you must first complete these tasks:\n"
+        f"1. Follow these X (Twitter) accounts:\n{x_accounts_list}\n"
+        f"2. Retweet this post: {TARGET_X_POST_URL}\n\n"
+        "After you have completed the tasks, use these commands:\n"
+        "Use /send to get 0.25 SPL FOGO tokens every 24 hours.\n"
+        "Use /send_fee to get a small amount of FOGO native tokens every 24 hours."
     )
 
 async def _start_fake_tasks_and_continue(update: Update, context: ContextTypes.DEFAULT_TYPE, next_command):
@@ -452,11 +453,11 @@ async def _start_fake_tasks_and_continue(update: Update, context: ContextTypes.D
     
     # Send fake task list
     fake_tasks_message = (
-        "Chào mừng bạn đến với Faucet FOGO! Để nhận token, bạn cần hoàn thành một số nhiệm vụ:\n"
-        "1. Tham gia kênh Telegram của chúng tôi.\n"
-        "2. Đăng ký nhận bản tin qua email.\n"
-        "3. Theo dõi FOGO trên X (Twitter).\n"
-        "Những nhiệm vụ này đang được hệ thống của chúng tôi tự động kiểm tra. Vui lòng đợi 30 giây."
+        "Welcome to the FOGO Faucet! To receive tokens, you need to complete a few tasks:\n"
+        "1. Join our Telegram channel.\n"
+        "2. Subscribe to our email newsletter.\n"
+        "3. Follow FOGO on X (Twitter).\n"
+        "These tasks are being automatically checked by our system. Please wait for 30 seconds."
     )
     await update.message.reply_text(fake_tasks_message)
     
@@ -468,7 +469,7 @@ async def _start_fake_tasks_and_continue(update: Update, context: ContextTypes.D
     
     # Clear the flag and send a completion message
     context.user_data.pop('awaiting_fake_tasks', None)
-    await update.message.reply_text("✅ Các nhiệm vụ đã hoàn thành. Bây giờ bạn có thể tiếp tục.")
+    await update.message.reply_text("✅ Tasks completed. You can now proceed.")
     
     # Call the next step in the flow
     if next_command == "send":
@@ -497,14 +498,14 @@ async def _continue_send_flow(update: Update, context: ContextTypes.DEFAULT_TYPE
                 context.user_data['awaiting_x_verifier_for_send'] = True
                 
                 await update.message.reply_text(
-                    f"Vui lòng kết nối tài khoản X của bạn để tiếp tục. Nhấp vào liên kết bên dưới, "
-                    f"ủy quyền cho bot, và sau đó dán mã PIN được cung cấp vào đây:\n\n"
+                    f"Please connect your X account to proceed. Click the link below, "
+                    f"authorize the bot, and then paste the provided PIN here:\n\n"
                     f"{auth_url}"
                 )
                 return
             except TweepyException as e:
                 logger.error(f"Failed to get X OAuth authorization URL. Check if API keys are valid and have correct permissions. Error: {e}")
-                await update.message.reply_text("Có lỗi xảy ra khi cố gắng kết nối với X. Vui lòng thử lại sau.")
+                await update.message.reply_text("An error occurred while trying to connect to X. Please try again later.")
                 return
 
     # Existing CAPTCHA logic
@@ -526,13 +527,13 @@ async def _continue_send_flow(update: Update, context: ContextTypes.DEFAULT_TYPE
             context.user_data['next_action'] = 'send_spl'
             await update.message.reply_photo(
                 photo=captcha_image,
-                caption="Vui lòng nhập các ký tự từ hình ảnh để tiếp tục (bạn sẽ cần giải lại CAPTCHA sau 24 giờ):"
+                caption="Please enter the characters from the image to proceed (you'll need to solve the CAPTCHA again after 24 hours):"
             )
             return
 
     # Proceed with wallet address request if all checks pass
     context.user_data['waiting_for_spl_address'] = True
-    await update.message.reply_text("Vui lòng gửi địa chỉ ví FOGO của bạn để nhận SPL FOGO:")
+    await update.message.reply_text("Please provide your FOGO wallet address to receive SPL FOGO:")
 
 async def _continue_send_fee_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -555,14 +556,14 @@ async def _continue_send_fee_flow(update: Update, context: ContextTypes.DEFAULT_
                 context.user_data['awaiting_x_verifier_for_send_fee'] = True
                 
                 await update.message.reply_text(
-                    f"Vui lòng kết nối tài khoản X của bạn để tiếp tục. Nhấp vào liên kết bên dưới, "
-                    f"ủy quyền cho bot, và sau đó dán mã PIN được cung cấp vào đây:\n\n"
+                    f"Please connect your X account to proceed. Click the link below, "
+                    f"authorize the bot, and then paste the provided PIN here:\n\n"
                     f"{auth_url}"
                 )
                 return
             except TweepyException as e:
                 logger.error(f"Failed to get X OAuth authorization URL. Check if API keys are valid and have correct permissions. Error: {e}")
-                await update.message.reply_text("Có lỗi xảy ra khi cố gắng kết nối với X. Vui lòng thử lại sau.")
+                await update.message.reply_text("An error occurred while trying to connect to X. Please try again later.")
                 return
 
     # Existing CAPTCHA logic
@@ -584,13 +585,13 @@ async def _continue_send_fee_flow(update: Update, context: ContextTypes.DEFAULT_
             context.user_data['next_action'] = 'send_fee'
             await update.message.reply_photo(
                 photo=captcha_image,
-                caption="Vui lòng nhập các ký tự từ hình ảnh để tiếp tục (bạn sẽ cần giải lại CAPTCHA sau 24 giờ):"
+                caption="Please enter the characters from the image to proceed (you'll need to solve the CAPTCHA again after 24 hours):"
             )
             return
 
     # Proceed with wallet address request if all checks pass
     context.user_data['waiting_for_fee_address'] = True
-    await update.message.reply_text("Vui lòng gửi địa chỉ ví FOGO của bạn để nhận native FOGO token:")
+    await update.message.reply_text("Please provide your FOGO wallet address to receive native FOGO tokens:")
 
 
 async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -606,8 +607,8 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         h, rem = divmod(int(remaining.total_seconds()), 3600)
         m, s = divmod(rem, 60)
         await update.message.reply_text(
-            f"Bạn đã yêu cầu SPL FOGO trong vòng 24 giờ qua.\n"
-            f"Vui lòng thử lại sau {h} giờ, {m} phút và {s} giây."
+            f"You have already requested SPL FOGO within the last 24 hours.\n"
+            f"Please try again in {h} hours, {m} minutes, and {s} seconds."
         )
         return
 
@@ -627,8 +628,8 @@ async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         h, rem = divmod(int(remaining.total_seconds()), 3600)
         m, s = divmod(rem, 60)
         await update.message.reply_text(
-            f"Bạn chỉ có thể yêu cầu FOGO native token một lần mỗi 24 giờ.\n"
-            f"Vui lòng thử lại sau {h} giờ, {m} phút và {s} giây."
+            f"You can only request FOGO native tokens once every 24 hours.\n"
+            f"Please try again in {h} hours, {m} minutes, and {s} seconds."
         )
         return
     
@@ -642,7 +643,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Check if we are currently in the fake task waiting period
     if context.user_data.get('awaiting_fake_tasks'):
-        await update.message.reply_text("Đang xử lý các nhiệm vụ. Vui lòng đợi một lát trước khi tiếp tục.")
+        await update.message.reply_text("Processing tasks. Please wait a moment before continuing.")
         return
 
     # --- New logic to handle X verifier code from OAuth ---
@@ -652,7 +653,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         request_token_secret = context.user_data.get('oauth_request_token_secret')
 
         if not request_token or not request_token_secret:
-            await update.message.reply_text("Không tìm thấy token ủy quyền. Vui lòng thử lại lệnh /send hoặc /send_fee.")
+            await update.message.reply_text("OAuth token not found. Please try the /send or /send_fee command again.")
             context.user_data.pop('awaiting_x_verifier_for_send', None)
             context.user_data.pop('awaiting_x_verifier_for_send_fee', None)
             return
@@ -673,8 +674,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not save_user_x_account_info(user_id, x_username, access_token, access_token_secret):
                 linked_user_id = get_telegram_user_id_by_x_username(x_username)
                 await update.message.reply_text(
-                    f"❌ Tài khoản X này (@{x_username}) đã được liên kết với một tài khoản Telegram khác (ID: {linked_user_id}).\n"
-                    "Vui lòng sử dụng một tài khoản X khác hoặc liên hệ với quản trị viên."
+                    f"❌ This X account (@{x_username}) is already linked to another Telegram account (ID: {linked_user_id}).\n"
+                    "Please use a different X account or contact an administrator."
                 )
                 context.user_data.pop('awaiting_x_verifier_for_send', None)
                 context.user_data.pop('awaiting_x_verifier_for_send_fee', None)
@@ -682,7 +683,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data.pop('oauth_request_token_secret', None)
                 return
 
-            await update.message.reply_text(f"✅ Tài khoản X @{x_username} đã được xác minh thành công!")
+            await update.message.reply_text(f"✅ X account @{x_username} successfully verified!")
 
             # Clear the waiting state flags and continue
             action_type = None
@@ -704,7 +705,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         except TweepyException as e:
             logger.error(f"X OAuth verification failed: {e}")
-            await update.message.reply_text("❌ Xác minh X thất bại. Vui lòng đảm bảo bạn đã dán đúng mã PIN. Hãy thử lại.")
+            await update.message.reply_text("❌ X verification failed. Please make sure you pasted the correct PIN. Try again.")
             context.user_data.pop('awaiting_x_verifier_for_send', None)
             context.user_data.pop('awaiting_x_verifier_for_send_fee', None)
         return
@@ -720,20 +721,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['awaiting_captcha_answer'] = False
             delete_captcha_challenge(user_id)
             update_user_captcha_solve_time(user_id, datetime.datetime.now())
-            await update.message.reply_text("✅ CAPTCHA đã được giải thành công! Bây giờ bạn có thể tiếp tục.")
+            await update.message.reply_text("✅ CAPTCHA solved successfully! You can now proceed.")
             
             # Continue the original flow based on stored 'next_action'
             next_action = context.user_data.pop('next_action', None)
             if next_action == 'send_spl':
                 context.user_data['waiting_for_spl_address'] = True
-                await update.message.reply_text("Vui lòng gửi địa chỉ ví FOGO của bạn để nhận SPL FOGO:")
+                await update.message.reply_text("Please provide your FOGO wallet address to receive SPL FOGO:")
             elif next_action == 'send_fee':
                 context.user_data['waiting_for_fee_address'] = True
-                await update.message.reply_text("Vui lòng gửi địa chỉ ví FOGO của bạn để nhận native FOGO token:")
+                await update.message.reply_text("Please provide your FOGO wallet address to receive native FOGO tokens:")
             return
         else:
-            await update.message.reply_text("❌ CAPTCHA không chính xác. Vui lòng thử lại. "
-                                           "Bạn sẽ cần nhập lại lệnh /send hoặc /send_fee để nhận CAPTCHA mới.")
+            await update.message.reply_text("❌ Incorrect CAPTCHA. Please try again. "
+                                           "You will need to re-enter the /send or /send_fee command to get a new CAPTCHA.")
             context.user_data['awaiting_captcha_answer'] = False
             delete_captcha_challenge(user_id)
             context.user_data['captcha_passed'] = False
@@ -746,27 +747,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["waiting_for_spl_address"] = False
 
         if not is_valid_solana_address(address):
-            await update.message.reply_text("Địa chỉ ví không hợp lệ. Vui lòng thử lại.")
+            await update.message.reply_text("Invalid wallet address. Please try again.")
             return
 
         if address in BLACKLISTED_WALLETS:
-            await update.message.reply_text("🚫 Ví này bị đưa vào danh sách đen. Bạn đã bị cấm sử dụng bot.")
+            await update.message.reply_text("🚫 This wallet is blacklisted. You have been banned from using the bot.")
             ban_user(user_id)
             return
 
-        await update.message.reply_text(f"Đang gửi {AMOUNT_TO_SEND_FOGO / 1_000_000_000} SPL FOGO đến {address}...")
+        await update.message.reply_text(f"Sending {AMOUNT_TO_SEND_FOGO / 1_000_000_000} SPL FOGO to {address}...")
 
         tx_hash = await send_fogo_spl_token(address, AMOUNT_TO_SEND_FOGO)
 
         if tx_hash:
             update_last_request_time(user_id, "send_fogo", datetime.datetime.now(), address, tx_hash)
             await update.message.reply_text(
-                f"✅ SPL FOGO đã được gửi thành công!\n"
-                f"[Xem giao dịch](https://fogoscan.com/tx/{tx_hash}?cluster=testnet)",
+                f"✅ SPL FOGO sent successfully!\n"
+                f"[View transaction](https://fogoscan.com/tx/{tx_hash}?cluster=testnet)",
                 parse_mode="Markdown"
             )
         else:
-            await update.message.reply_text("❌ Không thể gửi SPL FOGO. Vui lòng thử lại sau.")
+            await update.message.reply_text("❌ Failed to send SPL FOGO. Please try again later.")
         return
 
     if context.user_data.get("waiting_for_fee_address"):
@@ -774,61 +775,61 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["waiting_for_fee_address"] = False
 
         if not is_valid_solana_address(address):
-            await update.message.reply_text("Địa chỉ ví không hợp lệ. Vui lòng thử lại.")
+            await update.message.reply_text("Invalid wallet address. Please try again.")
             return
 
         if address in BLACKLISTED_WALLETS:
-            await update.message.reply_text("🚫 Ví này bị đưa vào danh sách đen. Bạn đã bị cấm sử dụng bot.")
+            await update.message.reply_text("🚫 This wallet is blacklisted. You have been banned from using the bot.")
             ban_user(user_id)
             return
 
         balance = await get_native_balance(address)
         if balance > 10_000_000:
-            await update.message.reply_text("Số dư ví của bạn vượt quá 0.01 FOGO native token, bạn không đủ điều kiện để nhận airdrop phí.")
+            await update.message.reply_text("Your wallet balance exceeds 0.01 FOGO native tokens, you are not eligible for a fee airdrop.")
             return
 
-        await update.message.reply_text(f"Đang gửi {FEE_AMOUNT / 1_000_000_000} FOGO native token đến {address}...")
+        await update.message.reply_text(f"Sending {FEE_AMOUNT / 1_000_000_000} FOGO native tokens to {address}...")
 
         tx_hash = await send_native_fogo(address, FEE_AMOUNT)
 
         if tx_hash:
             update_last_request_time(user_id, "send_fee", datetime.datetime.now(), address, tx_hash)
             await update.message.reply_text(
-                f"✅ FOGO native token đã được gửi thành công!\n"
-                f"[Xem giao dịch](https://fogoscan.com/tx/{tx_hash}?cluster=testnet)",
+                f"✅ FOGO native tokens sent successfully!\n"
+                f"[View transaction](https://fogoscan.com/tx/{tx_hash}?cluster=testnet)",
                 parse_mode="Markdown"
             )
         else:
-            await update.message.reply_text("❌ Không thể gửi FOGO native token. Vui lòng thử lại sau.")
+            await update.message.reply_text("❌ Failed to send FOGO native tokens. Please try again later.")
         return
 
-    await update.message.reply_text("Sử dụng /start, /send, hoặc /send_fee để yêu cầu token.")
+    await update.message.reply_text("Use /start, /send, or /send_fee to request tokens.")
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"An unexpected error occurred: {context.error}", exc_info=True)
     if update and update.message:
-        await update.message.reply_text("Có lỗi xảy ra. Vui lòng thử lại sau.")
+        await update.message.reply_text("An error occurred. Please try again later.")
 
 # Add /unban command handler for admins
 async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     admin_ids = os.getenv("ADMIN_IDS", "").split(",")
     if str(user_id) not in admin_ids:
-        await update.message.reply_text("❌ Bạn không được phép sử dụng lệnh này.")
+        await update.message.reply_text("❌ You are not authorized to use this command.")
         return
 
     if not context.args:
-        await update.message.reply_text("Cách sử dụng: /unban <user_id>")
+        await update.message.reply_text("Usage: /unban <user_id>")
         return
 
     try:
         target_id = int(context.args[0])
     except ValueError:
-        await update.message.reply_text("ID người dùng không hợp lệ.")
+        await update.message.reply_text("Invalid user ID.")
         return
 
     if target_id not in BANNED_USERS:
-        await update.message.reply_text("Người dùng này không bị cấm.")
+        await update.message.reply_text("This user is not banned.")
         return
 
     BANNED_USERS.remove(target_id)
@@ -843,23 +844,23 @@ async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Failed to update banned_users.txt: {e}")
 
-    await update.message.reply_text(f"✅ Người dùng {target_id} đã được gỡ cấm.")
+    await update.message.reply_text(f"✅ User {target_id} has been unbanned.")
 
 # Add /ban command to block a wallet address (admin only)
 async def ban_wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     admin_ids = os.getenv("ADMIN_IDS", "").split(",")
     if str(user_id) not in admin_ids:
-        await update.message.reply_text("❌ Bạn không được phép sử dụng lệnh này.")
+        await update.message.reply_text("❌ You are not authorized to use this command.")
         return
 
     if not context.args:
-        await update.message.reply_text("Cách sử dụng: /ban <wallet_address>")
+        await update.message.reply_text("Usage: /ban <wallet_address>")
         return
 
     wallet = context.args[0].strip()
     if wallet in BLACKLISTED_WALLETS:
-        await update.message.reply_text("Ví này đã bị đưa vào danh sách đen.")
+        await update.message.reply_text("This wallet is already blacklisted.")
         return
 
     BLACKLISTED_WALLETS.add(wallet)
@@ -869,14 +870,14 @@ async def ban_wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception as e:
         logger.error(f"Failed to write to blacklist.txt: {e}")
 
-    await update.message.reply_text(f"✅ Ví {wallet} đã bị đưa vào danh sách đen.")
+    await update.message.reply_text(f"✅ Wallet {wallet} has been blacklisted.")
 
 # Add /banstats command to show number of blacklisted wallets and banned users
 async def banstats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     admin_ids = os.getenv("ADMIN_IDS", "").split(",")
     if str(user_id) not in admin_ids:
-        await update.message.reply_text("❌ Bạn không được phép sử dụng lệnh này.")
+        await update.message.reply_text("❌ You are not authorized to use this command.")
         return
 
     wallet_count = 0
@@ -894,7 +895,7 @@ async def banstats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         pass
 
-    await update.message.reply_text(f"🔒 Số ví bị đưa vào danh sách đen: {wallet_count}\n👤 Số người dùng bị cấm: {user_count}")
+    await update.message.reply_text(f"🔒 Blacklisted wallets: {wallet_count}\n👤 Banned users: {user_count}")
 
 # Register handlers
 if __name__ == "__main__":
