@@ -222,6 +222,14 @@ def save_user_x_account_info(user_id: int, x_username: str, x_access_token: str,
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     try:
+        # Kiểm tra xem tên người dùng X đã được liên kết với một ID Telegram khác chưa
+        c.execute("SELECT user_id FROM user_x_accounts WHERE x_username = ? AND user_id != ?", (x_username, user_id))
+        existing_link = c.fetchone()
+        if existing_link:
+            logger.warning(f"X account @{x_username} is already linked to Telegram user ID {existing_link[0]}. Cannot link to user ID {user_id}.")
+            conn.close()
+            return False
+
         # Lưu thời gian hiện tại làm thời gian xác minh cuối cùng
         c.execute("REPLACE INTO user_x_accounts (user_id, x_username, x_access_token, x_access_token_secret, last_verification_time) VALUES (?, ?, ?, ?, ?)",
                   (user_id, x_username, x_access_token, x_access_token_secret, datetime.datetime.now().isoformat()))
@@ -570,7 +578,7 @@ async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 auth = tweepy.OAuth1UserHandler(X_API_KEY, X_API_SECRET)
                 auth_url = auth.get_authorization_url()
                 context.user_data['oauth_request_token'] = auth.request_token['oauth_token']
-                context.user_data['oauth_request_token_secret'] = auth.request_token['oauth_token_secret'] # Đã sửa lỗi chính tả ở đây
+                context.user_data['oauth_request_token_secret'] = auth.request_token['oauth_token_secret']
                 context.user_data['awaiting_x_verifier_for_send_fee'] = True
                 
                 task_message = (
@@ -647,11 +655,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             x_username = user_data.screen_name
 
             # Kiểm tra xem tài khoản X này đã được liên kết với một ID Telegram khác hay chưa
+            # GỌI LẠI HÀM NÀY ĐỂ CHECK LẠI TRẠNG THÁI LIÊN KẾT
             if not save_user_x_account_info(user_id, x_username, access_token, access_token_secret):
                 linked_user_id = get_telegram_user_id_by_x_username(x_username)
                 await update.message.reply_text(
-                    f"❌ This X account (@{x_username}) is already linked to another Telegram account (ID: {linked_user_id}).\n"
-                    "Please use a different X account or contact an administrator."
+                    f"❌ Tài khoản X này (@{x_username}) đã được liên kết với một tài khoản Telegram khác (ID: {linked_user_id}).\n"
+                    "Mỗi tài khoản X chỉ có thể liên kết với một tài khoản Telegram duy nhất."
                 )
                 context.user_data.pop('awaiting_x_verifier_for_send', None)
                 context.user_data.pop('awaiting_x_verifier_for_send_fee', None)
@@ -659,7 +668,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data.pop('oauth_request_token_secret', None)
                 return
 
-            await update.message.reply_text(f"✅ X account @{x_username} successfully verified!")
+            await update.message.reply_text(f"✅ Tài khoản X @{x_username} đã được xác minh thành công!")
 
             # Xóa các cờ trạng thái chờ và tiếp tục
             action_type = None
@@ -681,7 +690,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         except TweepyException as e:
             logger.error(f"X OAuth verification failed: {e}")
-            await update.message.reply_text("❌ X verification failed. Please make sure you pasted the correct PIN. Try again.")
+            await update.message.reply_text("❌ Xác minh X thất bại. Vui lòng đảm bảo bạn đã dán PIN chính xác. Hãy thử lại.")
             context.user_data.pop('awaiting_x_verifier_for_send', None)
             context.user_data.pop('awaiting_x_verifier_for_send_fee', None)
         return
