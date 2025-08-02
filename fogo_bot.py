@@ -75,7 +75,10 @@ else:
 
 # UPDATED: Reduced SPL FOGO from 0.25 to 0.2
 AMOUNT_TO_SEND_FOGO = 200_000_000  # 0.2 SPL FOGO (in base units, decimals=9)
-FEE_AMOUNT = 100_000_000           # 0.0001 native FOGO (lamports)
+
+# UPDATED: Changed FEE_AMOUNT from 0.1 FOGO to 0.01 FOGO (10_000_000 lamports)
+FEE_AMOUNT = 10_000_000           # 0.01 native FOGO (lamports)
+
 DECIMALS = 9
 DB_PATH = "fogo_requests.db"
 
@@ -466,7 +469,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "After you have completed the tasks, use these commands:\n"
         # UPDATED: Changed token amount in message
         "Use /send to get 0.2 SPL FOGO tokens every 24 hours.\n"
-        "Use /send_fee to get a small amount of FOGO native tokens every 24 hours."
+        # UPDATED: Changed FEE amount in message
+        "Use /send_fee to get a small amount of 0.01 FOGO native tokens every 24 hours."
     )
 
 async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -713,6 +717,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data['captcha_passed_fee'] = True
                 await update.message.reply_text("✅ CAPTCHA solved successfully! You can now proceed.")
                 context.user_data['waiting_for_fee_address'] = True
+                # UPDATED: Changed message to reflect new FEE_AMOUNT
                 await update.message.reply_text("Please provide your FOGO wallet address to receive native FOGO tokens:")
             
             return
@@ -770,9 +775,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         balance = await get_native_balance(address)
         if balance > 10_000_000:
+            # UPDATED: Changed message to reflect new FEE_AMOUNT
             await update.message.reply_text("Your wallet balance exceeds 0.01 FOGO native tokens, you are not eligible for a fee airdrop.")
             return
 
+        # UPDATED: Changed message to reflect new FEE_AMOUNT
         await update.message.reply_text(f"Sending {FEE_AMOUNT / 1_000_000_000} FOGO native tokens to {address}...")
 
         tx_hash = await send_native_fogo(address, FEE_AMOUNT)
