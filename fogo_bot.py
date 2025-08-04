@@ -239,42 +239,54 @@ def save_user_x_account_info(user_id: int, x_username: str, x_access_token: str,
         return False
 
 # UPDATED: Function to check if a wallet has any on-chain transaction history on Solana.
-async def is_wallet_new_on_solana(wallet_address: str) -> bool:
+async def is_wallet_old_enough_on_solana(wallet_address: str) -> bool:
     """
-    Checks if a wallet has any on-chain transaction history on the Solana mainnet.
-    Returns True if the wallet is new (no transactions), False otherwise.
-    This version is more robust against unexpected RPC response formats.
+    Kiểm tra xem ví có giao dịch cũ nhất lớn hơn 5 ngày trên mạng Solana hay không.
+    Trả về True nếu ví đủ điều kiện (giao dịch cũ nhất > 5 ngày), False nếu không.
     """
     try:
         pubkey = PublicKey(wallet_address)
-        # Use a Solana mainnet-beta RPC endpoint for the check
         async with AsyncClient("https://api.mainnet-beta.solana.com") as client:
-            resp = await client.get_signatures_for_address(pubkey, limit=1)
+            # Lấy 100 giao dịch gần nhất, giao dịch cũ nhất sẽ ở cuối danh sách.
+            resp = await client.get_signatures_for_address(pubkey, limit=100)
 
-            # Be defensive and check the response type and content
             signatures = []
             if isinstance(resp, dict) and 'result' in resp:
-                # The 'result' key's value could be a dict with 'value' key, or a list directly
-                result_value = resp['result']
-                if isinstance(result_value, dict) and 'value' in result_value:
-                    signatures = result_value['value']
-                elif isinstance(result_value, list):
+                result_value = resp.get('result', [])
+                if isinstance(result_value, list):
                     signatures = result_value
+                elif isinstance(result_value, dict) and 'value' in result_value:
+                    signatures = result_value['value']
             elif isinstance(resp, list):
-                # Handle the case where the top-level response is a list
                 signatures = resp
-            
-            # Finally, ensure we are working with a list before checking its length
-            if isinstance(signatures, list):
-                return len(signatures) == 0
+
+            if not signatures:
+                logger.info(f"Wallet {wallet_address} has no transaction history. Not old enough.")
+                return False
+
+            # Giao dịch cũ nhất là giao dịch cuối cùng trong danh sách
+            oldest_signature = signatures[-1]
+            oldest_block_time = oldest_signature.get('blockTime')
+
+            if oldest_block_time is None:
+                logger.warning(f"Oldest transaction for {wallet_address} has no blockTime. Assuming not old enough.")
+                return False
+
+            oldest_tx_datetime = datetime.datetime.fromtimestamp(oldest_block_time, tz=datetime.timezone.utc)
+            current_datetime = datetime.datetime.now(tz=datetime.timezone.utc)
+            tx_age = current_datetime - oldest_tx_datetime
+
+            if tx_age > datetime.timedelta(days=5):
+                logger.info(f"Wallet {wallet_address} oldest transaction is {tx_age.days} days old. It is old enough.")
+                return True
             else:
-                logger.warning(f"Unexpected RPC response format for {wallet_address}: {resp}")
-                return True # Assume new to be safe
+                logger.info(f"Wallet {wallet_address} oldest transaction is {tx_age.days} days old. It is NOT old enough.")
+                return False
 
     except Exception as e:
         logger.error(f"Error checking on-chain history for wallet {wallet_address} on Solana: {e}")
-        # If there's an error, assume it's a new wallet to be safe.
-        return True
+        # Nếu có lỗi, giả sử ví không đủ điều kiện để an toàn.
+        return False
 
 # Validate a Solana address
 def is_valid_solana_address(address: str) -> bool:
@@ -772,9 +784,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Invalid wallet address. Please try again.")
             return
         
-        # UPDATED: Use the new on-chain check on Solana
-        if await is_wallet_new_on_solana(address):
-            await update.message.reply_text("🚫 This wallet has no transaction history on the Solana blockchain. This faucet is intended for wallets with existing activity.")
+        # UPDATED: Use the new on-chain check on Solana with 5-day condition
+        if not await is_wallet_old_enough_on_solana(address):
+            await update.message.reply_text("🚫 Ví này có lịch sử giao dịch gần đây (giao dịch cũ nhất dưới 5 ngày). Vòi chỉ dành cho các ví đã hoạt động lâu hơn.")
             return
 
         if address in BLACKLISTED_WALLETS:
@@ -805,9 +817,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Invalid wallet address. Please try again.")
             return
         
-        # UPDATED: Use the new on-chain check on Solana
-        if await is_wallet_new_on_solana(address):
-            await update.message.reply_text("🚫 This wallet has no transaction history on the Solana blockchain. This faucet is intended for wallets with existing activity.")
+        # UPDATED: Use the new on-chain check on Solana with 5-day condition
+        if not await is_wallet_old_enough_on_solana(address):
+            await update.message.reply_text("🚫 Ví này có lịch sử giao dịch gần đây (giao dịch cũ nhất dưới 5 ngày). Vòi chỉ dành cho các ví đã hoạt động lâu hơn.")
             return
 
         if address in BLACKLISTED_WALLETS:
