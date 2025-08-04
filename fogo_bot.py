@@ -241,13 +241,13 @@ def save_user_x_account_info(user_id: int, x_username: str, x_access_token: str,
 # UPDATED: Function to check if a wallet has any on-chain transaction history on Solana.
 async def is_wallet_old_enough_on_solana(wallet_address: str) -> bool:
     """
-    Kiểm tra xem ví có giao dịch cũ nhất lớn hơn 5 ngày trên mạng Solana hay không.
-    Trả về True nếu ví đủ điều kiện (giao dịch cũ nhất > 5 ngày), False nếu không.
+    Checks if a wallet's oldest transaction is more than 5 days old on the Solana network.
+    Returns True if the wallet qualifies (oldest transaction > 5 days), False otherwise.
     """
     try:
         pubkey = PublicKey(wallet_address)
         async with AsyncClient("https://api.mainnet-beta.solana.com") as client:
-            # Lấy 100 giao dịch gần nhất, giao dịch cũ nhất sẽ ở cuối danh sách.
+            # Get the last 100 transactions, the oldest transaction will be at the end of the list.
             resp = await client.get_signatures_for_address(pubkey, limit=100)
 
             signatures = []
@@ -264,7 +264,7 @@ async def is_wallet_old_enough_on_solana(wallet_address: str) -> bool:
                 logger.info(f"Wallet {wallet_address} has no transaction history. Not old enough.")
                 return False
 
-            # Giao dịch cũ nhất là giao dịch cuối cùng trong danh sách
+            # The oldest transaction is the last transaction in the list
             oldest_signature = signatures[-1]
             oldest_block_time = oldest_signature.get('blockTime')
 
@@ -285,7 +285,7 @@ async def is_wallet_old_enough_on_solana(wallet_address: str) -> bool:
 
     except Exception as e:
         logger.error(f"Error checking on-chain history for wallet {wallet_address} on Solana: {e}")
-        # Nếu có lỗi, giả sử ví không đủ điều kiện để an toàn.
+        # If an error occurs, assume the wallet is not eligible for safety.
         return False
 
 # Validate a Solana address
@@ -786,7 +786,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # UPDATED: Use the new on-chain check on Solana with 5-day condition
         if not await is_wallet_old_enough_on_solana(address):
-            await update.message.reply_text("🚫 Ví này có lịch sử giao dịch gần đây (giao dịch cũ nhất dưới 5 ngày). Vòi chỉ dành cho các ví đã hoạt động lâu hơn.")
+            await update.message.reply_text("🚫 This wallet has recent transaction history (oldest transaction is less than 5 days old). The faucet is only for wallets that have been active for longer.")
             return
 
         if address in BLACKLISTED_WALLETS:
@@ -819,7 +819,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # UPDATED: Use the new on-chain check on Solana with 5-day condition
         if not await is_wallet_old_enough_on_solana(address):
-            await update.message.reply_text("🚫 Ví này có lịch sử giao dịch gần đây (giao dịch cũ nhất dưới 5 ngày). Vòi chỉ dành cho các ví đã hoạt động lâu hơn.")
+            await update.message.reply_text("🚫 This wallet has recent transaction history (oldest transaction is less than 5 days old). The faucet is only for wallets that have been active for longer.")
             return
 
         if address in BLACKLISTED_WALLETS:
