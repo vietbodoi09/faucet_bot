@@ -53,8 +53,8 @@ TARGET_X_POST_URL = "https://x.com/FogoChain/status/1951268728555053106"
 # X (Twitter) API keys
 X_API_KEY = "fg5Sb5BQdqpMA6av9yIMdcxkA"
 X_API_SECRET = "sF2Orm9hw1UIWhEOMDoC3sHkoQDYNW1Zs7I9XC0Bo247YVFt9k"
-X_ACCESS_TOKEN = "1392057369769627651-NSFPv7VqLOA6sXwOtu3PJB2UxkryG"
-X_ACCESS_TOKEN_SECRET = "6ghQP5tDb08k6pCsFqH0l8ykZO6sMSdLC2eUUl1b3hKQ"
+X_ACCESS_TOKEN = "1392057369769627651-NSFPv7VqLOyA6sXwOtu3PJB2UxkryG"
+X_ACCESS_TOKEN_SECRET = "6ghQP5tDb08k6pCsFq4H0l8ykZO6sMSdLC2eUUl1b3hKQ"
 
 if PRIVATE_KEY is None:
     logger.critical("FOGO_BOT_PRIVATE_KEY environment variable is not set.")
@@ -507,7 +507,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id in BANNED_USERS:
         return
-    name = update.effective_user.first_name or "you"
+    name = update.effective_user.first_name or "there"
     
     x_accounts_list = "\n".join([f"- @{x}" for x in TARGET_X_USERNAMES])
     
@@ -684,7 +684,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         request_token_secret = context.user_data.get('oauth_request_token_secret')
 
         if not request_token or not request_token_secret:
-            await update.message.reply_text("OAuth token not found. Please try the /send or /send_fee command again.")
+            await update.message.reply_text("Authorization token not found. Please try the /send or /send_fee command again.")
             context.user_data.pop('awaiting_x_verifier_for_send', None)
             context.user_data.pop('awaiting_x_verifier_for_send_fee', None)
             return
@@ -700,7 +700,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_data = api.verify_credentials()
             x_username = user_data.screen_name
 
-            # Check if this X account is already linked to a different Telegram ID
+            # Check if this X account is already linked to another Telegram ID
             if not save_user_x_account_info(user_id, x_username, access_token, access_token_secret):
                 linked_user_id = get_telegram_user_id_by_x_username(x_username)
                 await update.message.reply_text(
@@ -916,6 +916,40 @@ async def ban_wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     await update.message.reply_text(f"✅ Wallet {wallet} has been blacklisted.")
 
+# Add /delete command to remove a wallet from the blacklist (admin only)
+async def delete_wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    admin_ids = os.getenv("ADMIN_IDS", "").split(",")
+    if str(user_id) not in admin_ids:
+        await update.message.reply_text("❌ You are not authorized to use this command.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("Usage: /delete <wallet_address>")
+        return
+
+    wallet_to_delete = context.args[0].strip()
+    if wallet_to_delete not in BLACKLISTED_WALLETS:
+        await update.message.reply_text(f"Wallet {wallet_to_delete} is not in the blacklist.")
+        return
+
+    try:
+        # Remove from the in-memory set
+        BLACKLISTED_WALLETS.remove(wallet_to_delete)
+        
+        # Rewrite the blacklist file without the deleted wallet
+        with open("blacklist.txt", "r") as f:
+            lines = f.readlines()
+        with open("blacklist.txt", "w") as f:
+            for line in lines:
+                if line.strip() != wallet_to_delete:
+                    f.write(line)
+        await update.message.reply_text(f"✅ Wallet {wallet_to_delete} has been removed from the blacklist.")
+    except Exception as e:
+        logger.error(f"Failed to delete wallet {wallet_to_delete} from blacklist.txt: {e}")
+        await update.message.reply_text(f"❌ An error occurred while trying to delete wallet {wallet_to_delete}.")
+
+
 # Add /banstats command to show count of blacklisted wallets and banned users
 async def banstats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -951,6 +985,7 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("send_fee", send_fee_command))
     app.add_handler(CommandHandler("unban", unban_command))
     app.add_handler(CommandHandler("ban", ban_wallet_command))
+    app.add_handler(CommandHandler("delete", delete_wallet_command)) # New command handler
     app.add_handler(CommandHandler("banstats", banstats_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(error_handler)
