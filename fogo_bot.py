@@ -241,8 +241,8 @@ def save_user_x_account_info(user_id: int, x_username: str, x_access_token: str,
 # UPDATED: Function to check if a wallet has any on-chain transaction history on Solana.
 async def is_wallet_old_enough_on_solana(wallet_address: str) -> bool:
     """
-    Checks if a wallet's oldest transaction is more than 1 month (30 days) old on the Solana network.
-    Returns True if the wallet qualifies (oldest transaction > 30 days), False otherwise.
+    Checks if a wallet's oldest transaction is more than 3 months (90 days) old on the Solana network.
+    Returns True if the wallet qualifies (oldest transaction > 90 days), False otherwise.
     """
     try:
         pubkey = PublicKey(wallet_address)
@@ -276,8 +276,8 @@ async def is_wallet_old_enough_on_solana(wallet_address: str) -> bool:
             current_datetime = datetime.datetime.now(tz=datetime.timezone.utc)
             tx_age = current_datetime - oldest_tx_datetime
 
-            # Changed condition from 5 days to 30 days
-            if tx_age > datetime.timedelta(days=30):
+            # Changed condition from 30 days to 90 days
+            if tx_age > datetime.timedelta(days=90):
                 logger.info(f"Wallet {wallet_address} oldest transaction is {tx_age.days} days old. It is old enough.")
                 return True
             else:
@@ -785,9 +785,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Invalid wallet address. Please try again.")
             return
         
-        # UPDATED: Use the new on-chain check on Solana with 1-month condition
+        # UPDATED: Use the new on-chain check on Solana with 3-month condition
         if not await is_wallet_old_enough_on_solana(address):
-            await update.message.reply_text("🚫 your wallet not old enough on solana ")
+            await update.message.reply_text("🚫 This wallet has recent transaction history (oldest transaction is less than 3 months old). The faucet is only for wallets that have been active for longer.")
             return
 
         if address in BLACKLISTED_WALLETS:
@@ -818,9 +818,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Invalid wallet address. Please try again.")
             return
         
-        # UPDATED: Use the new on-chain check on Solana with 1-month condition
+        # UPDATED: Use the new on-chain check on Solana with 3-month condition
         if not await is_wallet_old_enough_on_solana(address):
-            await update.message.reply_text("🚫 This wallet has recent transaction history (oldest transaction is less than 1 month old). The faucet is only for wallets that have been active for longer.")
+            await update.message.reply_text("🚫 your wallet not old enough on solana")
             return
 
         if address in BLACKLISTED_WALLETS:
