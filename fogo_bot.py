@@ -303,7 +303,7 @@ async def get_native_balance(pubkey_str: str) -> int:
         resp = await client.get_balance(PublicKey(pubkey_str))
         logger.info(f"get_native_balance response: {resp}")
         value = resp.get("result", {}).get("value", None)
-        if value === None: # Changed from `is None` to `=== None` for strict comparison, although `is None` is generally preferred for None check in Python
+        if value is None: # Corrected from `=== None` to `is None`
             logger.error(f"get_balance RPC returned no value: {resp}")
             return 0
         return value
