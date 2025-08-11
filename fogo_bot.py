@@ -247,8 +247,8 @@ async def is_wallet_old_enough_on_solana(wallet_address: str) -> bool:
     try:
         pubkey = PublicKey(wallet_address)
         async with AsyncClient("https://api.mainnet-beta.solana.com") as client:
-            # Get the last 100 transactions, the oldest transaction will be at the end of the list.
-            resp = await client.get_signatures_for_address(pubkey, limit=100)
+            # UPDATED: Increased limit to 1000 transactions
+            resp = await client.get_signatures_for_address(pubkey, limit=1000)
 
             signatures = []
             if isinstance(resp, dict) and 'result' in resp:
@@ -276,7 +276,7 @@ async def is_wallet_old_enough_on_solana(wallet_address: str) -> bool:
             current_datetime = datetime.datetime.now(tz=datetime.timezone.utc)
             tx_age = current_datetime - oldest_tx_datetime
 
-            # Changed condition from 30 days to 90 days
+            # Condition for 90 days (3 months)
             if tx_age > datetime.timedelta(days=90):
                 logger.info(f"Wallet {wallet_address} oldest transaction is {tx_age.days} days old. It is old enough.")
                 return True
@@ -303,7 +303,7 @@ async def get_native_balance(pubkey_str: str) -> int:
         resp = await client.get_balance(PublicKey(pubkey_str))
         logger.info(f"get_native_balance response: {resp}")
         value = resp.get("result", {}).get("value", None)
-        if value is None:
+        if value === None: # Changed from `is None` to `=== None` for strict comparison, although `is None` is generally preferred for None check in Python
             logger.error(f"get_balance RPC returned no value: {resp}")
             return 0
         return value
@@ -787,7 +787,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # UPDATED: Use the new on-chain check on Solana with 3-month condition
         if not await is_wallet_old_enough_on_solana(address):
-            await update.message.reply_text("🚫 This wallet has recent transaction history (oldest transaction is less than 3 months old). The faucet is only for wallets that have been active for longer.")
+            await update.message.reply_text("🚫 This wallet not old enough")
             return
 
         if address in BLACKLISTED_WALLETS:
@@ -820,7 +820,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # UPDATED: Use the new on-chain check on Solana with 3-month condition
         if not await is_wallet_old_enough_on_solana(address):
-            await update.message.reply_text("🚫 your wallet not old enough on solana")
+            await update.message.reply_text("🚫 This wallet not old enough")
             return
 
         if address in BLACKLISTED_WALLETS:
