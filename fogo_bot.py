@@ -23,81 +23,84 @@ from spl.token.instructions import TransferCheckedParams, transfer_checked, get_
 from spl.token.constants import TOKEN_PROGRAM_ID
 
 import httpx
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 from captcha.image import ImageCaptcha
 
-# Import new libraries for X (Twitter) integration
+# X (Twitter) OAuth (only for connect/verify user identity)
 import tweepy
 from tweepy.errors import TweepyException
 
-# Set up logger
+# snscrape for checking "$FURBO" tweet without X API
+try:
+    import snscrape.modules.twitter as sntwitter
+    SNSCRAPE_ENABLED = True
+except Exception:
+    SNSCRAPE_ENABLED = False
+
+# =========================
+# Logger
+# =========================
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Constants and environment variables
+# =========================
+# Config & constants
+# =========================
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 PRIVATE_KEY = os.getenv("FOGO_BOT_PRIVATE_KEY")
+# NOTE: Replace with your actual SPL FOGO mint
 FOGO_TOKEN_MINT = PublicKey("So11111111111111111111111111111111111111112")
 
-# List of target X (Twitter) accounts to follow
 TARGET_X_USERNAMES_STR = os.getenv(
     "TARGET_X_USERNAMES",
     "FogoChain,ambient_finance,ValiantTrade,RobertSagurton,catcake0907,thebookofjoey,Pyronfi"
 )
 TARGET_X_USERNAMES = [name.strip() for name in TARGET_X_USERNAMES_STR.split(',') if name.strip()]
 
-# New constant for the specific X post ID to retweet
+# (Kept for reference link text, not used for verification)
 TARGET_X_POST_ID = "1951268728555053106"
 TARGET_X_POST_URL = "https://x.com/FogoChain/status/1951268728555053106"
 
-# X (Twitter) API keys
-X_API_KEY = "fg5Sb5BQdqpMA6av9yIMdcxkA"
-X_API_SECRET = "sF2Orm9hw1UIWhEOMDoC3sHkoQDYNW1Zs7I9XC0Bo247YVFt9k"
-X_ACCESS_TOKEN = "1392057369769627651-NSFPv7VqLOyA6sXwOtu3PJB2UxkryG"
-X_ACCESS_TOKEN_SECRET = "6ghQP5tDb08k6pCsFq4H0l8ykZO6sMSdLC2eUUl1b3hKQ"
+# X API keys (used only for OAuth connect; tweet check uses snscrape)
+X_API_KEY = os.getenv("X_API_KEY")
+X_API_SECRET = os.getenv("X_API_SECRET")
+X_ACCESS_TOKEN = os.getenv("X_ACCESS_TOKEN")
+X_ACCESS_TOKEN_SECRET = os.getenv("X_ACCESS_TOKEN_SECRET")
 
 if PRIVATE_KEY is None:
     logger.critical("FOGO_BOT_PRIVATE_KEY environment variable is not set.")
     raise EnvironmentError("FOGO_BOT_PRIVATE_KEY is missing.")
 
-# Check X API credentials
-if any(key is None for key in [X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET]):
-    logger.warning("⚠️ X (Twitter) API credentials are not fully set. The bot will not be able to check for X follows and retweets.")
+# OAuth enable?
+if any(key is None for key in [X_API_KEY, X_API_SECRET]):
+    logger.warning("X (Twitter) API credentials missing. OAuth connect will be disabled.")
     X_API_ENABLED = False
 else:
     X_API_ENABLED = True
-    try:
-        auth = tweepy.OAuth1UserHandler(X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET)
-        x_api_v1 = tweepy.API(auth)
-    except TweepyException as e:
-        logger.error(f"Failed to authenticate with X API: {e}")
-        X_API_ENABLED = False
 
-# UPDATED: Reduced SPL FOGO from 0.2 to 0.15
-AMOUNT_TO_SEND_FOGO = 150_000_000  # 0.15 SPL FOGO (in base units, decimals=9)
-
-# UPDATED: Changed FEE_AMOUNT from 0.1 FOGO to 0.01 FOGO (10_000_000 lamports)
-FEE_AMOUNT = 10_000_000           # 0.01 native FOGO (lamports)
-
+# Amounts
+AMOUNT_TO_SEND_FOGO = 800_000_000      # 0.8 SPL (decimals=9)
+FEE_AMOUNT = 10_000_000                # 0.01 native (lamports)
 DECIMALS = 9
 DB_PATH = "fogo_requests.db"
 
-# Load blacklist
+# =========================
+# Blacklist/Ban
+# =========================
 def load_blacklist(path="blacklist.txt") -> set:
     try:
         with open(path, "r") as f:
             return set(line.strip() for line in f if line.strip())
     except FileNotFoundError:
-        logger.warning("⚠️ blacklist.txt not found, no wallet is blacklisted.")
+        logger.warning("blacklist.txt not found, no wallet is blacklisted.")
         return set()
 
-# Load banned users
 def load_banned_users(path="banned_users.txt") -> set:
     try:
         with open(path, "r") as f:
             return set(int(line.strip()) for line in f if line.strip())
     except FileNotFoundError:
-        logger.warning("⚠️ banned_users.txt not found, no user is banned.")
+        logger.warning("banned_users.txt not found, no user is banned.")
         return set()
 
 def ban_user(user_id: int, path="banned_users.txt"):
@@ -108,7 +111,9 @@ def ban_user(user_id: int, path="banned_users.txt"):
 BLACKLISTED_WALLETS = load_blacklist()
 BANNED_USERS = load_banned_users()
 
-# Initialize DB & helpers
+# =========================
+# DB init & helpers
+# =========================
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -129,7 +134,6 @@ def init_db():
             timestamp TIMESTAMP
         )
     """)
-    # New table to store user's CAPTCHA status per request type
     c.execute("""
         CREATE TABLE IF NOT EXISTS user_captcha_status (
             user_id INTEGER,
@@ -138,7 +142,6 @@ def init_db():
             PRIMARY KEY (user_id, request_type)
         )
     """)
-    # New table to store user's X (Twitter) username and OAuth tokens
     c.execute("""
         CREATE TABLE IF NOT EXISTS user_x_accounts (
             user_id INTEGER PRIMARY KEY,
@@ -148,25 +151,18 @@ def init_db():
             last_verification_time TIMESTAMP
         )
     """)
-
-    # Add 'last_verification_time' column if it doesn't exist.
+    # Ensure column exists (idempotent)
     try:
         c.execute("ALTER TABLE user_x_accounts ADD COLUMN last_verification_time TIMESTAMP")
-        logger.info("Added 'last_verification_time' column to 'user_x_accounts' table.")
     except sqlite3.OperationalError as e:
-        if "duplicate column name" in str(e):
-            logger.info("Column 'last_verification_time' already exists. No changes.")
-        else:
+        if "duplicate column name" not in str(e):
             logger.error(f"Error adding column: {e}")
-            
+
+    # Ensure request_type exists in user_captcha_status
     c.execute("PRAGMA table_info(user_captcha_status)")
-    columns = [column[1] for column in c.fetchall()]
+    columns = [col[1] for col in c.fetchall()]
     if "request_type" not in columns:
-        logger.info("'request_type' column not found in user_captcha_status. Adding it now...")
         c.execute("ALTER TABLE user_captcha_status ADD COLUMN request_type TEXT DEFAULT 'default_type'")
-        logger.info("'request_type' column added successfully.")
-    else:
-        logger.info("'request_type' column already exists. No changes were made.")
 
     conn.commit()
     conn.close()
@@ -201,7 +197,6 @@ def get_user_x_account_info(user_id: int):
     return None, None, None, None
 
 def get_telegram_user_id_by_x_username(x_username: str):
-    """Fetches the Telegram user_id linked to a given X username."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT user_id FROM user_x_accounts WHERE x_username = ?", (x_username,))
@@ -212,24 +207,20 @@ def get_telegram_user_id_by_x_username(x_username: str):
     return None
 
 def save_user_x_account_info(user_id: int, x_username: str, x_access_token: str, x_access_token_secret: str):
-    """
-    Saves user's X account info and current timestamp for verification.
-    Returns True on success, False if the X account is already linked to a different Telegram ID.
-    """
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     try:
-        # Check if the X username is already linked to a different Telegram ID
         c.execute("SELECT user_id FROM user_x_accounts WHERE x_username = ? AND user_id != ?", (x_username, user_id))
         existing_link = c.fetchone()
         if existing_link:
-            logger.warning(f"X account @{x_username} is already linked to Telegram user ID {existing_link[0]}. Cannot link to user ID {user_id}.")
+            logger.warning(f"X account @{x_username} is already linked to Telegram user ID {existing_link[0]}.")
             conn.close()
             return False
 
-        # Save current time as the last verification time
-        c.execute("REPLACE INTO user_x_accounts (user_id, x_username, x_access_token, x_access_token_secret, last_verification_time) VALUES (?, ?, ?, ?, ?)",
-                  (user_id, x_username, x_access_token, x_access_token_secret, datetime.datetime.now().isoformat()))
+        c.execute("""
+            REPLACE INTO user_x_accounts (user_id, x_username, x_access_token, x_access_token_secret, last_verification_time)
+            VALUES (?, ?, ?, ?, ?)
+        """, (user_id, x_username, x_access_token, x_access_token_secret, datetime.datetime.now().isoformat()))
         conn.commit()
         conn.close()
         return True
@@ -238,58 +229,9 @@ def save_user_x_account_info(user_id: int, x_username: str, x_access_token: str,
         conn.close()
         return False
 
-# UPDATED: Function to check if a wallet has any on-chain transaction history on Solana.
-async def is_wallet_old_enough_on_solana(wallet_address: str) -> bool:
-    """
-    Checks if a wallet's oldest transaction is more than 3 months (90 days) old on the Solana network.
-    Returns True if the wallet qualifies (oldest transaction > 90 days), False otherwise.
-    """
-    try:
-        pubkey = PublicKey(wallet_address)
-        async with AsyncClient("https://api.mainnet-beta.solana.com") as client:
-            # UPDATED: Increased limit to 1000 transactions
-            resp = await client.get_signatures_for_address(pubkey, limit=1000)
-
-            signatures = []
-            if isinstance(resp, dict) and 'result' in resp:
-                result_value = resp.get('result', [])
-                if isinstance(result_value, list):
-                    signatures = result_value
-                elif isinstance(result_value, dict) and 'value' in result_value:
-                    signatures = result_value['value']
-            elif isinstance(resp, list):
-                signatures = resp
-
-            if not signatures:
-                logger.info(f"Wallet {wallet_address} has no transaction history. Not old enough.")
-                return False
-
-            # The oldest transaction is the last transaction in the list
-            oldest_signature = signatures[-1]
-            oldest_block_time = oldest_signature.get('blockTime')
-
-            if oldest_block_time is None:
-                logger.warning(f"Oldest transaction for {wallet_address} has no blockTime. Assuming not old enough.")
-                return False
-
-            oldest_tx_datetime = datetime.datetime.fromtimestamp(oldest_block_time, tz=datetime.timezone.utc)
-            current_datetime = datetime.datetime.now(tz=datetime.timezone.utc)
-            tx_age = current_datetime - oldest_tx_datetime
-
-            # Condition for 90 days (3 months)
-            if tx_age > datetime.timedelta(days=90):
-                logger.info(f"Wallet {wallet_address} oldest transaction is {tx_age.days} days old. It is old enough.")
-                return True
-            else:
-                logger.info(f"Wallet {wallet_address} oldest transaction is {tx_age.days} days old. It is NOT old enough.")
-                return False
-
-    except Exception as e:
-        logger.error(f"Error checking on-chain history for wallet {wallet_address} on Solana: {e}")
-        # If an error occurs, assume the wallet is not eligible for safety.
-        return False
-
-# Validate a Solana address
+# =========================
+# Chain utils
+# =========================
 def is_valid_solana_address(address: str) -> bool:
     try:
         decoded = base58.b58decode(address)
@@ -297,18 +239,16 @@ def is_valid_solana_address(address: str) -> bool:
     except Exception:
         return False
 
-# Get native FOGO balance
 async def get_native_balance(pubkey_str: str) -> int:
     async with AsyncClient("https://testnet.fogo.io") as client:
         resp = await client.get_balance(PublicKey(pubkey_str))
         logger.info(f"get_native_balance response: {resp}")
         value = resp.get("result", {}).get("value", None)
-        if value is None: # Corrected from `=== None` to `is None`
+        if value is None:
             logger.error(f"get_balance RPC returned no value: {resp}")
             return 0
         return value
 
-# Send native FOGO
 async def send_native_fogo(to_address: str, amount: int):
     decoded_key = base58.b58decode(PRIVATE_KEY)
     sender = SolanaKeypair.from_secret_key(decoded_key)
@@ -325,12 +265,7 @@ async def send_native_fogo(to_address: str, amount: int):
     ))
 
     async with httpx.AsyncClient() as http_client:
-        payload = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "getLatestBlockhash",
-            "params": [{"commitment": "finalized"}]
-        }
+        payload = {"jsonrpc": "2.0", "id": 1, "method": "getLatestBlockhash", "params": [{"commitment": "finalized"}]}
         rpc_response = await http_client.post("https://testnet.fogo.io", json=payload)
         rpc_json = rpc_response.json()
         latest_blockhash = rpc_json.get("result", {}).get("value", {}).get("blockhash")
@@ -352,11 +287,9 @@ async def send_native_fogo(to_address: str, amount: int):
         logger.error(f"Failed to send native FOGO tx: {resp}")
         return None
 
-# Send SPL FOGO
 async def send_fogo_spl_token(to_address: str, amount: int):
     try:
         logger.info(f"Sending {amount / 1_000_000_000} SPL FOGO to {to_address}")
-
         decoded_key = base58.b58decode(PRIVATE_KEY)
         sender = SolanaKeypair.from_secret_key(decoded_key)
         sender_pubkey = sender.public_key
@@ -370,12 +303,7 @@ async def send_fogo_spl_token(to_address: str, amount: int):
             account_exists = resp.get("result", {}).get("value") is not None
 
         async with httpx.AsyncClient(timeout=20.0) as http_client:
-            payload = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "getLatestBlockhash",
-                "params": []
-            }
+            payload = {"jsonrpc": "2.0", "id": 1, "method": "getLatestBlockhash", "params": []}
             rpc_response = await http_client.post("https://testnet.fogo.io", json=payload)
             rpc_json = rpc_response.json()
             latest_blockhash = rpc_json.get("result", {}).get("value", {}).get("blockhash")
@@ -420,25 +348,23 @@ async def send_fogo_spl_token(to_address: str, amount: int):
         else:
             logger.error(f"Failed to send SPL transaction: {send_resp}")
             return None
-
     except Exception as e:
         logger.error(f"Critical error while sending SPL token: {e}", exc_info=True)
         return None
 
-# --- CAPTCHA functionality ---
+# =========================
+# CAPTCHA
+# =========================
 def generate_captcha():
-    """Generates a CAPTCHA image and corresponding text."""
     generator = ImageCaptcha(width=200, height=80)
     characters = string.ascii_uppercase + string.digits
-    captcha_text = ''.join(random.choice(characters) for i in range(5))
-
+    captcha_text = ''.join(random.choice(characters) for _ in range(5))
     image_data = generator.generate(captcha_text)
     img_byte_arr = io.BytesIO(image_data.read())
     img_byte_arr.seek(0)
     return captcha_text, img_byte_arr
 
 def save_captcha_challenge(user_id: int, challenge_text: str):
-    """Saves an active CAPTCHA challenge to the database."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("REPLACE INTO captcha_challenges (user_id, challenge_text, timestamp) VALUES (?, ?, ?)",
@@ -447,7 +373,6 @@ def save_captcha_challenge(user_id: int, challenge_text: str):
     conn.close()
 
 def get_captcha_challenge(user_id: int):
-    """Fetches the active CAPTCHA challenge from the database."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT challenge_text, timestamp FROM captcha_challenges WHERE user_id = ?", (user_id,))
@@ -458,7 +383,6 @@ def get_captcha_challenge(user_id: int):
     return None, None
 
 def delete_captcha_challenge(user_id: int):
-    """Deletes the active CAPTCHA challenge from the database."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("DELETE FROM captcha_challenges WHERE user_id = ?", (user_id,))
@@ -466,7 +390,6 @@ def delete_captcha_challenge(user_id: int):
     conn.close()
 
 def update_user_captcha_solve_time(user_id: int, request_type: str, solve_time: datetime.datetime):
-    """Updates a user's last CAPTCHA solve time for a specific request type."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("REPLACE INTO user_captcha_status (user_id, request_type, last_solve_time) VALUES (?, ?, ?)",
@@ -475,7 +398,6 @@ def update_user_captcha_solve_time(user_id: int, request_type: str, solve_time: 
     conn.close()
 
 def get_user_captcha_solve_time(user_id: int, request_type: str):
-    """Fetches a user's last CAPTCHA solve time for a specific request type."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT last_solve_time FROM user_captcha_status WHERE user_id = ? AND request_type = ?", (user_id, request_type))
@@ -484,45 +406,61 @@ def get_user_captcha_solve_time(user_id: int, request_type: str):
     if row:
         return datetime.datetime.fromisoformat(row[0])
     return None
-# --- End of CAPTCHA functionality ---
 
-# --- X (Twitter) follow and retweet check functionality (bypassed due to API limitations) ---
-def are_all_x_accounts_followed(user_x_username):
-    """
-    This function is currently a placeholder and always returns True due to API limitations.
-    Actual checking for follows and retweets is not possible with the current API access level.
-    """
-    logger.warning("Bypassing X API checks due to 403 Forbidden error. User must follow manually.")
-    return True, None
+# =========================
+# X / snscrape helpers
+# =========================
+X_TASK_KEYWORD = "$FURBO"
 
-def has_retweeted_post(user_x_username, post_id):
+def has_furbo_tweet(x_username: str, max_check: int = 25) -> bool:
     """
-    This function is currently a placeholder and always returns True due to API limitations.
-    Actual checking for follows and retweets is not possible with the current API access level.
+    Scan up to max_check most recent tweets for the '$FURBO' keyword.
+    Uses snscrape (no X API required).
     """
-    logger.warning("Bypassing X API checks due to 403 Forbidden error. User must retweet manually.")
-    return True
+    if not SNSCRAPE_ENABLED:
+        logger.error("snscrape not available. Install with: pip install snscrape")
+        return False
+    try:
+        for i, tweet in enumerate(sntwitter.TwitterUserScraper(x_username).get_items()):
+            if i >= max_check:
+                break
+            content = getattr(tweet, "content", "") or ""
+            if X_TASK_KEYWORD.lower() in content.lower():
+                return True
+        return False
+    except Exception as e:
+        logger.error(f"snscrape error for @{x_username}: {e}")
+        return False
 
+# =========================
 # Telegram handlers
+# =========================
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id in BANNED_USERS:
         return
     name = update.effective_user.first_name or "there"
-    
     x_accounts_list = "\n".join([f"- @{x}" for x in TARGET_X_USERNAMES])
-    
+
     await update.message.reply_text(
         f"Hello {name}! I am the FOGO Testnet faucet bot.\n\n"
-        "To receive tokens, you must complete the following tasks:\n"
-        f"1. Follow these X (Twitter) accounts:\n{x_accounts_list}\n"
-        f"2. Retweet this post: {TARGET_X_POST_URL}\n\n"
-        "After completing the tasks, use the following commands:\n"
-        "Use /send to receive 0.15 SPL FOGO tokens every 24 hours.\n"
-        "Use /send_fee to receive a small amount of 0.01 native FOGO tokens every 24 hours."
+        "To receive tokens, please do the following:\n"
+        f"1) Follow these X (Twitter) accounts (no verification):\n{x_accounts_list}\n"
+        f"2) Post a public tweet containing the keyword: `{X_TASK_KEYWORD}`\n\n"
+        "After completing the tasks, use these commands:\n"
+        "• /send — claim 0.8 SPL FOGO every 24h (requires tweet check)\n"
+        "• /send_fee — claim 0.01 native FOGO every 24h"
     )
 
 async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /send flow:
+    1) Check 24h faucet cooldown
+    2) If X not verified in last 24h -> prompt OAuth connect
+    3) After connect (or already verified): CHECK TWEET $FURBO via snscrape
+    4) Daily CAPTCHA
+    5) Ask wallet & send SPL
+    """
     user_id = update.effective_user.id
     if user_id in BANNED_USERS:
         return
@@ -535,15 +473,16 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         h, rem = divmod(int(remaining.total_seconds()), 3600)
         m, s = divmod(rem, 60)
         await update.message.reply_text(
-            f"You have already requested SPL FOGO within the last 24 hours.\n"
+            "You have already requested SPL FOGO within the last 24 hours.\n"
             f"Please try again in {h} hours, {m} minutes, and {s} seconds."
         )
         return
 
     x_accounts_list = "\n".join([f"- @{x}" for x in TARGET_X_USERNAMES])
-    _, last_verification_time, _, _ = get_user_x_account_info(user_id)
+    x_username, last_verification_time, _, _ = get_user_x_account_info(user_id)
 
-    if last_verification_time is None or (now - last_verification_time) > datetime.timedelta(hours=24):
+    # Require OAuth connect at least every 24h
+    if (last_verification_time is None) or ((now - last_verification_time) > datetime.timedelta(hours=24)) or (not x_username):
         if X_API_ENABLED:
             try:
                 auth = tweepy.OAuth1UserHandler(X_API_KEY, X_API_SECRET)
@@ -553,24 +492,36 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data['awaiting_x_verifier_for_send'] = True
 
                 task_message = (
-                    "You will need to solve a daily CAPTCHA and complete the following steps to claim tokens:\n\n"
-                    f"1. Follow these X (Twitter) accounts:\n{x_accounts_list}\n\n"
-                    f"2. Retweet this post: {TARGET_X_POST_URL}\n\n"
-                    f"3. Please connect your X account to proceed. Click the link below, authorize the bot, and then paste the provided PIN here:\n\n"
+                    "To claim, you must solve a CAPTCHA and complete the steps below:\n\n"
+                    f"1) Follow these X (Twitter) accounts (no verification):\n{x_accounts_list}\n\n"
+                    f"2) Post a public tweet containing: `{X_TASK_KEYWORD}`\n\n"
+                    "3) Connect your X account to proceed. Click the link below, authorize the bot, "
+                    "then paste the provided PIN here:\n\n"
                     f"{auth_url}"
                 )
                 await update.message.reply_text(task_message)
                 return
             except TweepyException as e:
-                logger.error(f"Failed to get X OAuth authorization URL. Check if API keys are valid and have correct permissions. Error: {e}")
-                await update.message.reply_text("An error occurred while trying to connect to X. Please try again later.")
+                logger.error(f"Failed to get X OAuth authorization URL: {e}")
+                await update.message.reply_text("An error occurred while connecting to X. Please try again later.")
                 return
         else:
-            await update.message.reply_text("The X API is not enabled. Please try again later.")
+            await update.message.reply_text("X API (OAuth) is not enabled. Please try again later.")
             return
 
-    # Existing CAPTCHA logic
-    # Changed: Query CAPTCHA status for "send_fogo" request
+    # We have an X username verified within 24h -> check tweet $FURBO
+    if not x_username:
+        await update.message.reply_text("You must connect your X account first using /send to continue.")
+        return
+
+    if not has_furbo_tweet(x_username):
+        await update.message.reply_text(
+            f"We couldn't find a recent tweet containing `{X_TASK_KEYWORD}` from @{x_username}.\n"
+            f"Please post a tweet with `{X_TASK_KEYWORD}` and run /send again."
+        )
+        return
+
+    # Daily CAPTCHA (per request_type=send_fogo)
     last_captcha_solve_time = get_user_captcha_solve_time(user_id, "send_fogo")
     daily_captcha_required = True
     if last_captcha_solve_time:
@@ -581,21 +532,20 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if daily_captcha_required or not context.user_data.get('captcha_passed_send', False):
         if daily_captcha_required:
             context.user_data['captcha_passed_send'] = False
-        
-        if not context.user_data.get('captcha_passed_send', False):
-            captcha_text, captcha_image = generate_captcha()
-            save_captcha_challenge(user_id, captcha_text)
-            context.user_data['awaiting_captcha_answer'] = True
-            context.user_data['next_action'] = 'send_spl'
-            await update.message.reply_photo(
-                photo=captcha_image,
-                caption="Please enter the characters from the image to proceed (you will need to solve the CAPTCHA again after 24 hours):"
-            )
-            return
 
-    # Continue to wallet address request if all checks pass
+        captcha_text, captcha_image = generate_captcha()
+        save_captcha_challenge(user_id, captcha_text)
+        context.user_data['awaiting_captcha_answer'] = True
+        context.user_data['next_action'] = 'send_spl'
+        await update.message.reply_photo(
+            photo=captcha_image,
+            caption="Enter the characters from the image to proceed (CAPTCHA resets every 24 hours)."
+        )
+        return
+
+    # Ask wallet
     context.user_data['waiting_for_spl_address'] = True
-    await update.message.reply_text("Please provide your FOGO wallet address to receive SPL FOGO:")
+    await update.message.reply_text("Please provide your FOGO wallet address to receive 0.8 SPL FOGO:")
 
 async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -610,43 +560,42 @@ async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         h, rem = divmod(int(remaining.total_seconds()), 3600)
         m, s = divmod(rem, 60)
         await update.message.reply_text(
-            f"You can only request native FOGO tokens once every 24 hours.\n"
+            "You can only request native FOGO once every 24 hours.\n"
             f"Please try again in {h} hours, {m} minutes, and {s} seconds."
         )
         return
-    
+
     x_accounts_list = "\n".join([f"- @{x}" for x in TARGET_X_USERNAMES])
     _, last_verification_time, _, _ = get_user_x_account_info(user_id)
-    
+
     if last_verification_time is None or (now - last_verification_time) > datetime.timedelta(hours=24):
         if X_API_ENABLED:
             try:
                 auth = tweepy.OAuth1UserHandler(X_API_KEY, X_API_SECRET)
                 auth_url = auth.get_authorization_url()
                 context.user_data['oauth_request_token'] = auth.request_token['oauth_token']
-                # CORRECTED LINE: Used 'oauth_token_secret' instead of 'oauth_request_token_secret'
                 context.user_data['oauth_request_token_secret'] = auth.request_token['oauth_token_secret']
                 context.user_data['awaiting_x_verifier_for_send_fee'] = True
-                
+
                 task_message = (
-                    "You will need to solve a daily CAPTCHA and complete the following steps to claim tokens:\n\n"
-                    f"1. Follow these X (Twitter) accounts:\n{x_accounts_list}\n\n"
-                    f"2. Retweet this post: {TARGET_X_POST_URL}\n\n"
-                    f"3. Please connect your X account to proceed. Click the link below, authorize the bot, and then paste the provided PIN here:\n\n"
+                    "To claim, you must solve a CAPTCHA and connect your X account:\n\n"
+                    f"1) Follow these X (Twitter) accounts (no verification):\n{x_accounts_list}\n\n"
+                    f"2) (Optional for /send_fee) Tweet `{X_TASK_KEYWORD}` — not required for native fee faucet.\n\n"
+                    "3) Connect your X account to proceed. Click the link below, authorize the bot, "
+                    "then paste the provided PIN here:\n\n"
                     f"{auth_url}"
                 )
                 await update.message.reply_text(task_message)
                 return
             except TweepyException as e:
-                logger.error(f"Failed to get X OAuth authorization URL. Check if API keys are valid and have correct permissions. Error: {e}")
-                await update.message.reply_text("An error occurred while trying to connect to X. Please try again later.")
+                logger.error(f"Failed to get X OAuth authorization URL: {e}")
+                await update.message.reply_text("An error occurred while connecting to X. Please try again later.")
                 return
         else:
-            await update.message.reply_text("The X API is not enabled. Please try again later.")
+            await update.message.reply_text("X API is not enabled. Please try again later.")
             return
 
-    # Existing CAPTCHA logic
-    # Changed: Query CAPTCHA status for "send_fee" request
+    # Daily CAPTCHA (per request_type=send_fee)
     last_captcha_solve_time = get_user_captcha_solve_time(user_id, "send_fee")
     daily_captcha_required = True
     if last_captcha_solve_time:
@@ -657,35 +606,33 @@ async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if daily_captcha_required or not context.user_data.get('captcha_passed_fee', False):
         if daily_captcha_required:
             context.user_data['captcha_passed_fee'] = False
-        
-        if not context.user_data.get('captcha_passed_fee', False):
-            captcha_text, captcha_image = generate_captcha()
-            save_captcha_challenge(user_id, captcha_text)
-            context.user_data['awaiting_captcha_answer'] = True
-            context.user_data['next_action'] = 'send_fee'
-            await update.message.reply_photo(
-                photo=captcha_image,
-                caption="Please enter the characters from the image to proceed (you will need to solve the CAPTCHA again after 24 hours):"
-            )
-            return
 
-    # Continue to wallet address request if all checks pass
+        captcha_text, captcha_image = generate_captcha()
+        save_captcha_challenge(user_id, captcha_text)
+        context.user_data['awaiting_captcha_answer'] = True
+        context.user_data['next_action'] = 'send_fee'
+        await update.message.reply_photo(
+            photo=captcha_image,
+            caption="Enter the characters from the image to proceed (CAPTCHA resets every 24 hours)."
+        )
+        return
+
     context.user_data['waiting_for_fee_address'] = True
-    await update.message.reply_text("Please provide your FOGO wallet address to receive native FOGO tokens:")
+    await update.message.reply_text("Please provide your FOGO wallet address to receive 0.01 native FOGO:")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id in BANNED_USERS:
         return
 
-    # --- New logic to handle the X verification PIN from OAuth ---
+    # --- Handle X OAuth PIN ---
     if context.user_data.get('awaiting_x_verifier_for_send') or context.user_data.get('awaiting_x_verifier_for_send_fee'):
         verifier = update.message.text.strip()
         request_token = context.user_data.get('oauth_request_token')
         request_token_secret = context.user_data.get('oauth_request_token_secret')
 
         if not request_token or not request_token_secret:
-            await update.message.reply_text("Authorization token not found. Please try the /send or /send_fee command again.")
+            await update.message.reply_text("Authorization token not found. Please run /send or /send_fee again.")
             context.user_data.pop('awaiting_x_verifier_for_send', None)
             context.user_data.pop('awaiting_x_verifier_for_send_fee', None)
             return
@@ -694,19 +641,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             auth = tweepy.OAuth1UserHandler(X_API_KEY, X_API_SECRET)
             auth.request_token = {'oauth_token': request_token, 'oauth_token_secret': request_token_secret}
             access_token, access_token_secret = auth.get_access_token(verifier)
-            
-            # Use the access token to get user info
+
+            # fetch user data with token
             auth_v1 = tweepy.OAuth1UserHandler(X_API_KEY, X_API_SECRET, access_token, access_token_secret)
             api = tweepy.API(auth_v1)
             user_data = api.verify_credentials()
             x_username = user_data.screen_name
 
-            # Check if this X account is already linked to another Telegram ID
             if not save_user_x_account_info(user_id, x_username, access_token, access_token_secret):
                 linked_user_id = get_telegram_user_id_by_x_username(x_username)
                 await update.message.reply_text(
-                    f"❌ This X account (@{x_username}) is already linked to another Telegram account (ID: {linked_user_id}).\n"
-                    "Each X account can only be linked to one Telegram account."
+                    f"This X account (@{x_username}) is already linked to another Telegram account (ID: {linked_user_id}).\n"
+                    "Each X account can be linked to only one Telegram account."
                 )
                 context.user_data.pop('awaiting_x_verifier_for_send', None)
                 context.user_data.pop('awaiting_x_verifier_for_send_fee', None)
@@ -714,9 +660,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data.pop('oauth_request_token_secret', None)
                 return
 
-            await update.message.reply_text(f"✅ X account @{x_username} successfully verified!")
+            await update.message.reply_text(f"X account @{x_username} connected successfully!")
 
-            # Clear waiting flags and proceed
             action_type = None
             if context.user_data.get('awaiting_x_verifier_for_send'):
                 context.user_data.pop('awaiting_x_verifier_for_send', None)
@@ -727,48 +672,44 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             context.user_data.pop('oauth_request_token', None)
             context.user_data.pop('oauth_request_token_secret', None)
-            
-            # Now, recall the appropriate command handler to continue the flow
+
             if action_type == 'send':
                 await send_command(update, context)
             elif action_type == 'send_fee':
                 await send_fee_command(update, context)
-        
+
         except TweepyException as e:
             logger.error(f"X OAuth verification failed: {e}")
-            await update.message.reply_text("❌ X verification failed. Please make sure you pasted the correct PIN. Please try again.")
+            await update.message.reply_text("X verification failed. Please make sure you pasted the correct PIN and try again.")
             context.user_data.pop('awaiting_x_verifier_for_send', None)
             context.user_data.pop('awaiting_x_verifier_for_send_fee', None)
         return
 
-    # --- CAPTCHA handling first ---
+    # --- CAPTCHA handling ---
     if context.user_data.get('awaiting_captcha_answer', False):
         user_answer = update.message.text.strip().upper()
-
         stored_challenge, _ = get_captcha_challenge(user_id)
 
         if stored_challenge and user_answer == stored_challenge.upper():
             context.user_data['awaiting_captcha_answer'] = False
             delete_captcha_challenge(user_id)
-            
-            # Changed: Update CAPTCHA status based on next_action
             next_action = context.user_data.pop('next_action', None)
+
             if next_action == 'send_spl':
                 update_user_captcha_solve_time(user_id, "send_fogo", datetime.datetime.now())
                 context.user_data['captcha_passed_send'] = True
-                await update.message.reply_text("✅ CAPTCHA solved successfully! You may now proceed.")
+                await update.message.reply_text("CAPTCHA solved! Proceeding.")
                 context.user_data['waiting_for_spl_address'] = True
-                await update.message.reply_text("Please provide your FOGO wallet address to receive SPL FOGO:")
+                await update.message.reply_text("Please provide your FOGO wallet address to receive 0.8 SPL FOGO:")
             elif next_action == 'send_fee':
                 update_user_captcha_solve_time(user_id, "send_fee", datetime.datetime.now())
                 context.user_data['captcha_passed_fee'] = True
-                await update.message.reply_text("✅ CAPTCHA solved successfully! You may now proceed.")
+                await update.message.reply_text("CAPTCHA solved! Proceeding.")
                 context.user_data['waiting_for_fee_address'] = True
-                await update.message.reply_text("Please provide your FOGO wallet address to receive native FOGO tokens:")
-            
+                await update.message.reply_text("Please provide your FOGO wallet address to receive 0.01 native FOGO:")
             return
         else:
-            await update.message.reply_text("❌ Incorrect CAPTCHA. Please try again. You will need to re-enter the /send or /send_fee command to get a new CAPTCHA.")
+            await update.message.reply_text("Incorrect CAPTCHA. Please re-run /send or /send_fee to get a new CAPTCHA.")
             context.user_data['awaiting_captcha_answer'] = False
             delete_captcha_challenge(user_id)
             context.user_data['captcha_passed_send'] = False
@@ -776,7 +717,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop('next_action', None)
             return
 
-    # --- The rest of handle_message (wallet address handling) ---
+    # --- Wallet handling ---
     if context.user_data.get("waiting_for_spl_address"):
         address = update.message.text.strip()
         context.user_data["waiting_for_spl_address"] = False
@@ -784,30 +725,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not is_valid_solana_address(address):
             await update.message.reply_text("Invalid wallet address. Please try again.")
             return
-        
-        # UPDATED: Use the new on-chain check on Solana with 3-month condition
-        if not await is_wallet_old_enough_on_solana(address):
-            await update.message.reply_text("🚫 This wallet not old enough")
-            return
 
         if address in BLACKLISTED_WALLETS:
-            await update.message.reply_text("🚫 This wallet has been blacklisted. You are banned from using this bot.")
+            await update.message.reply_text("This wallet is blacklisted. You are banned from using this bot.")
             ban_user(user_id)
             return
 
-        await update.message.reply_text(f"Sending {AMOUNT_TO_SEND_FOGO / 1_000_000_000} SPL FOGO to {address}...")
+        await update.message.reply_text(f"Sending 0.8 SPL FOGO to {address}...")
 
         tx_hash = await send_fogo_spl_token(address, AMOUNT_TO_SEND_FOGO)
 
         if tx_hash:
             update_last_request_time(user_id, "send_fogo", datetime.datetime.now(), address, tx_hash)
             await update.message.reply_text(
-                f"✅ SPL FOGO sent successfully!\n"
+                f"SPL FOGO sent successfully!\n"
                 f"[View transaction](https://fogoscan.com/tx/{tx_hash}?cluster=testnet)",
                 parse_mode="Markdown"
             )
         else:
-            await update.message.reply_text("❌ Failed to send SPL FOGO. Please try again later.")
+            await update.message.reply_text("Failed to send SPL FOGO. Please try again later.")
         return
 
     if context.user_data.get("waiting_for_fee_address"):
@@ -817,35 +753,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not is_valid_solana_address(address):
             await update.message.reply_text("Invalid wallet address. Please try again.")
             return
-        
-        # UPDATED: Use the new on-chain check on Solana with 3-month condition
-        if not await is_wallet_old_enough_on_solana(address):
-            await update.message.reply_text("🚫 This wallet not old enough")
-            return
 
         if address in BLACKLISTED_WALLETS:
-            await update.message.reply_text("🚫 This wallet has been blacklisted. You are banned from using this bot.")
+            await update.message.reply_text("This wallet is blacklisted. You are banned from using this bot.")
             ban_user(user_id)
             return
 
         balance = await get_native_balance(address)
         if balance > 10_000_000:
-            await update.message.reply_text("Your wallet balance exceeds 0.01 native FOGO tokens, you are not eligible for the fee airdrop.")
+            await update.message.reply_text("Your wallet balance exceeds 0.01 native FOGO, so you are not eligible for the fee airdrop.")
             return
 
-        await update.message.reply_text(f"Sending {FEE_AMOUNT / 1_000_000_000} native FOGO tokens to {address}...")
+        await update.message.reply_text(f"Sending 0.01 native FOGO to {address}...")
 
         tx_hash = await send_native_fogo(address, FEE_AMOUNT)
 
         if tx_hash:
             update_last_request_time(user_id, "send_fee", datetime.datetime.now(), address, tx_hash)
             await update.message.reply_text(
-                f"✅ Native FOGO tokens sent successfully!\n"
+                f"Native FOGO sent successfully!\n"
                 f"[View transaction](https://fogoscan.com/tx/{tx_hash}?cluster=testnet)",
                 parse_mode="Markdown"
             )
         else:
-            await update.message.reply_text("❌ Failed to send native FOGO tokens. Please try again later.")
+            await update.message.reply_text("Failed to send native FOGO. Please try again later.")
         return
 
     await update.message.reply_text("Use /start, /send, or /send_fee to request tokens.")
@@ -855,12 +786,14 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update and update.message:
         await update.message.reply_text("An error occurred. Please try again later.")
 
-# Add /unban command handler for admins
+# =========================
+# Admin commands
+# =========================
 async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     admin_ids = os.getenv("ADMIN_IDS", "").split(",")
     if str(user_id) not in admin_ids:
-        await update.message.reply_text("❌ You are not authorized to use this command.")
+        await update.message.reply_text("You are not authorized to use this command.")
         return
 
     if not context.args:
@@ -878,7 +811,6 @@ async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     BANNED_USERS.remove(target_id)
-
     try:
         with open("banned_users.txt", "r") as f:
             lines = f.readlines()
@@ -889,14 +821,13 @@ async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Failed to update banned_users.txt: {e}")
 
-    await update.message.reply_text(f"✅ User {target_id} has been unbanned.")
+    await update.message.reply_text(f"User {target_id} has been unbanned.")
 
-# Add /ban command to blacklist a wallet (admin only)
 async def ban_wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     admin_ids = os.getenv("ADMIN_IDS", "").split(",")
     if str(user_id) not in admin_ids:
-        await update.message.reply_text("❌ You are not authorized to use this command.")
+        await update.message.reply_text("You are not authorized to use this command.")
         return
 
     if not context.args:
@@ -915,14 +846,13 @@ async def ban_wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception as e:
         logger.error(f"Failed to write to blacklist.txt: {e}")
 
-    await update.message.reply_text(f"✅ Wallet {wallet} has been blacklisted.")
+    await update.message.reply_text(f"Wallet {wallet} has been blacklisted.")
 
-# Add /delete command to remove a wallet from the blacklist (admin only)
 async def delete_wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     admin_ids = os.getenv("ADMIN_IDS", "").split(",")
     if str(user_id) not in admin_ids:
-        await update.message.reply_text("❌ You are not authorized to use this command.")
+        await update.message.reply_text("You are not authorized to use this command.")
         return
 
     if not context.args:
@@ -935,49 +865,46 @@ async def delete_wallet_command(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     try:
-        # Remove from the in-memory set
         BLACKLISTED_WALLETS.remove(wallet_to_delete)
-        
-        # Rewrite the blacklist file without the deleted wallet
         with open("blacklist.txt", "r") as f:
             lines = f.readlines()
         with open("blacklist.txt", "w") as f:
             for line in lines:
                 if line.strip() != wallet_to_delete:
                     f.write(line)
-        await update.message.reply_text(f"✅ Wallet {wallet_to_delete} has been removed from the blacklist.")
+        await update.message.reply_text(f"Wallet {wallet_to_delete} has been removed from the blacklist.")
     except Exception as e:
         logger.error(f"Failed to delete wallet {wallet_to_delete} from blacklist.txt: {e}")
-        await update.message.reply_text(f"❌ An error occurred while trying to delete wallet {wallet_to_delete}.")
+        await update.message.reply_text("An error occurred while trying to update the blacklist.")
 
-
-# Add /banstats command to show count of blacklisted wallets and banned users
 async def banstats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     admin_ids = os.getenv("ADMIN_IDS", "").split(",")
     if str(user_id) not in admin_ids:
-        await update.message.reply_text("❌ You are not authorized to use this command.")
+        await update.message.reply_text("You are not authorized to use this command.")
         return
 
     wallet_count = 0
     user_count = 0
-
     try:
         with open("blacklist.txt", "r") as f:
             wallet_count = len(set(line.strip() for line in f if line.strip()))
     except:
         pass
-
     try:
         with open("banned_users.txt", "r") as f:
             user_count = len(set(line.strip() for line in f if line.strip()))
     except:
         pass
 
-    await update.message.reply_text(f"🔒 Blacklisted wallets: {wallet_count}\n👤 Banned users: {user_count}")
+    await update.message.reply_text(f"Blacklisted wallets: {wallet_count}\nBanned users: {user_count}")
 
-# Register handlers
+# =========================
+# Main
+# =========================
 if __name__ == "__main__":
+    if not BOT_TOKEN:
+        raise EnvironmentError("TELEGRAM_BOT_TOKEN is not set.")
     init_db()
     app = Application.builder().token(BOT_TOKEN).build()
 
@@ -986,7 +913,7 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("send_fee", send_fee_command))
     app.add_handler(CommandHandler("unban", unban_command))
     app.add_handler(CommandHandler("ban", ban_wallet_command))
-    app.add_handler(CommandHandler("delete", delete_wallet_command)) # New command handler
+    app.add_handler(CommandHandler("delete", delete_wallet_command))
     app.add_handler(CommandHandler("banstats", banstats_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(error_handler)
