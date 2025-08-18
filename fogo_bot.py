@@ -593,7 +593,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"1. Follow these X (Twitter) accounts:\n{x_accounts_list}\n"
         f"2. Post a public tweet containing the keyword: `$FURBO` everyday\n"
         "After completing the tasks, use the following commands:\n"
-        "Use /send to receive 0.8 SPL FOGO tokens every 24 hours.\n"
+        "Use /send to receive 0.8 SPL FOGO and 5000 $FURBO tokens every 24 hours.\n"
         "Use /send_fee to receive a small amount of 0.01 native FOGO tokens every 24 hours."
     )
 
@@ -1080,4 +1080,5 @@ if __name__ == "__main__":
     app.add_error_handler(error_handler)
 
     app.run_polling()
+
 
