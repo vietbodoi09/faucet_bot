@@ -885,8 +885,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             await update.message.reply_text("❌ Failed to send SPL FOGO. Please try again later.")
-        return
         
+
         if tx_hash_other:
             update_last_request_time(user_id, "send_fogo", datetime.datetime.now(), address, tx_hash_other)
             await update.message.reply_text(
