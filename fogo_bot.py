@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 PRIVATE_KEY = os.getenv("FOGO_BOT_PRIVATE_KEY")
 FOGO_TOKEN_MINT = PublicKey("So11111111111111111111111111111111111111112")
-OTHER_MINT =PublicKey("T7dBi3xN9ycJ4rmXMVRv3ZYWDXMZV8Lhap2AZkySV6x")
+OTHER_MINT =PublicKey("So11111111111111111111111111111111111111112")
 
 # List of target X (Twitter) accounts to follow
 TARGET_X_USERNAMES_STR = os.getenv(
@@ -76,7 +76,7 @@ else:
 
 # UPDATED: Reduced SPL FOGO from 0.2 to 0.15
 AMOUNT_TO_SEND_FOGO = 800_000_000  # 0.15 SPL FOGO (in base units, decimals=9)
-AMOUNT_TO_SEND_FURBO = 5000_000_000_000
+AMOUNT_TO_SEND_FURBO = 100_000_000
 
 # UPDATED: Changed FEE_AMOUNT from 0.1 FOGO to 0.01 FOGO (10_000_000 lamports)
 FEE_AMOUNT = 10_000_000           # 0.01 native FOGO (lamports)
@@ -591,7 +591,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Hello {name}! I am the FOGO Testnet faucet bot.\n\n"
         "To receive tokens, you must complete the following tasks:\n"
         f"1. Follow these X (Twitter) accounts:\n{x_accounts_list}\n"
-        f"2. Post a public tweet containing the keyword: `$FURBO`\n"
+        f"2. Post a public tweet containing the keyword: `$FURBO` everyday\n"
         "After completing the tasks, use the following commands:\n"
         "Use /send to receive 0.8 SPL FOGO tokens every 24 hours.\n"
         "Use /send_fee to receive a small amount of 0.01 native FOGO tokens every 24 hours."
@@ -630,7 +630,7 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 task_message = (
                     "You will need to solve a daily CAPTCHA and complete the following steps to claim tokens:\n\n"
                     f"1. Follow these X (Twitter) accounts:\n{x_accounts_list}\n\n"
-                    f"2. Post a public tweet containing the keyword: `$FURBO`\n"
+                    f"2. Post a public tweet containing the keyword: `$FURBO` everyday\n"
                     f"3. Please connect your X account to proceed. Click the link below, authorize the bot, and then paste the provided PIN here:\n\n"
                     f"{auth_url}"
                 )
@@ -706,7 +706,7 @@ async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 task_message = (
                     "You will need to solve a daily CAPTCHA and complete the following steps to claim tokens:\n\n"
                     f"1. Follow these X (Twitter) accounts:\n{x_accounts_list}\n\n"
-                    f"2. Post a public tweet containing the keyword: `$FURBO`\n"
+                    f"2. Post a public tweet containing the keyword: `$FURBO` everyday\n"
                     f"3. Please connect your X account to proceed. Click the link below, authorize the bot, and then paste the provided PIN here:\n\n"
                     f"{auth_url}"
                 )
@@ -1080,4 +1080,3 @@ if __name__ == "__main__":
     app.add_error_handler(error_handler)
 
     app.run_polling()
-
