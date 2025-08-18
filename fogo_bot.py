@@ -8,6 +8,7 @@ import io
 import random
 import string
 import subprocess
+from typing import Optional
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -33,7 +34,7 @@ from captcha.image import ImageCaptcha
 import tweepy
 from tweepy.errors import TweepyException
 
-# snscrape for checking "$FURBO" tweet without X API
+# snscrape (fallback) — có thể không dùng nếu cookie hoạt động ổn
 try:
     import snscrape.modules.twitter as sntwitter
     SNSCRAPE_ENABLED = True
@@ -53,7 +54,7 @@ logger = logging.getLogger("faucet_bot")
 # =========================
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 PRIVATE_KEY = os.getenv("FOGO_BOT_PRIVATE_KEY")  # base58 secret key (64 bytes)
-# LƯU Ý: thay bằng mint SPL FOGO thật của bạn
+# THAY bằng mint SPL FOGO thật của bạn
 FOGO_TOKEN_MINT = PublicKey("So11111111111111111111111111111111111111112")
 
 TARGET_X_USERNAMES_STR = os.getenv(
@@ -72,6 +73,17 @@ TARGET_X_POST_URL = "https://x.com/FogoChain/status/1951268728555053106"
 X_API_KEY = os.getenv("X_API_KEY")
 X_API_SECRET = os.getenv("X_API_SECRET")
 
+# Single-account cookie (web API)
+X_COOKIE_AUTH_TOKEN = os.getenv("X_COOKIE_AUTH_TOKEN")  # cookie auth_token
+X_COOKIE_CT0 = os.getenv("X_COOKIE_CT0")                # cookie ct0 (cũng là x-csrf-token)
+X_USER_AGENT = os.getenv(
+    "X_USER_AGENT",
+    # UA mặc định cho đỡ nghi ngờ
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/127.0.0.0 Safari/537.36"
+)
+
 if PRIVATE_KEY is None:
     logger.critical("FOGO_BOT_PRIVATE_KEY environment variable is not set.")
     raise EnvironmentError("FOGO_BOT_PRIVATE_KEY is missing.")
@@ -85,7 +97,7 @@ else:
 
 # Amounts
 AMOUNT_TO_SEND_FOGO = 800_000_000  # 0.8 SPL (decimals=9)
-FEE_AMOUNT = 10_000_000  # 0.01 native (lamports)
+FEE_AMOUNT = 10_000_000            # 0.01 native (lamports)
 DECIMALS = 9
 DB_PATH = "fogo_requests.db"
 
@@ -100,7 +112,6 @@ def load_blacklist(path="blacklist.txt") -> set:
         logger.warning("blacklist.txt not found, no wallet is blacklisted.")
         return set()
 
-
 def load_banned_users(path="banned_users.txt") -> set:
     try:
         with open(path, "r") as f:
@@ -109,12 +120,10 @@ def load_banned_users(path="banned_users.txt") -> set:
         logger.warning("banned_users.txt not found, no user is banned.")
         return set()
 
-
 def ban_user(user_id: int, path="banned_users.txt"):
     with open(path, "a") as f:
         f.write(f"{user_id}\n")
     BANNED_USERS.add(user_id)
-
 
 BLACKLISTED_WALLETS = load_blacklist()
 BANNED_USERS = load_banned_users()
@@ -183,7 +192,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-
 def get_last_request_time(user_id, request_type):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -197,7 +205,6 @@ def get_last_request_time(user_id, request_type):
         return datetime.datetime.fromisoformat(row[0])
     return None
 
-
 def update_last_request_time(user_id, request_type, request_time, wallet, tx_hash):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -207,7 +214,6 @@ def update_last_request_time(user_id, request_type, request_time, wallet, tx_has
     )
     conn.commit()
     conn.close()
-
 
 def get_user_x_account_info(user_id: int):
     conn = sqlite3.connect(DB_PATH)
@@ -225,7 +231,6 @@ def get_user_x_account_info(user_id: int):
         return row[0], last_verification_time, row[2], row[3]
     return None, None, None, None
 
-
 def get_telegram_user_id_by_x_username(x_username: str):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -235,7 +240,6 @@ def get_telegram_user_id_by_x_username(x_username: str):
     if row:
         return row[0]
     return None
-
 
 def save_user_x_account_info(
     user_id: int, x_username: str, x_access_token: str, x_access_token_secret: str
@@ -276,7 +280,6 @@ def save_user_x_account_info(
         conn.close()
         return False
 
-
 # =========================
 # Chain utils
 # =========================
@@ -287,7 +290,6 @@ def is_valid_solana_address(address: str) -> bool:
     except Exception:
         return False
 
-
 async def get_native_balance(pubkey_str: str) -> int:
     async with AsyncClient("https://testnet.fogo.io") as client:
         resp = await client.get_balance(PublicKey(pubkey_str))
@@ -297,7 +299,6 @@ async def get_native_balance(pubkey_str: str) -> int:
             logger.error(f"get_balance RPC returned no value: {resp}")
             return 0
         return value
-
 
 async def send_native_fogo(to_address: str, amount: int):
     decoded_key = base58.b58decode(PRIVATE_KEY)
@@ -345,7 +346,6 @@ async def send_native_fogo(to_address: str, amount: int):
     else:
         logger.error(f"Failed to send native FOGO tx: {resp}")
         return None
-
 
 async def send_fogo_spl_token(to_address: str, amount: int):
     try:
@@ -425,7 +425,6 @@ async def send_fogo_spl_token(to_address: str, amount: int):
         logger.error(f"Critical error while sending SPL token: {e}", exc_info=True)
         return None
 
-
 # =========================
 # CAPTCHA
 # =========================
@@ -438,7 +437,6 @@ def generate_captcha():
     img_byte_arr.seek(0)
     return captcha_text, img_byte_arr
 
-
 def save_captcha_challenge(user_id: int, challenge_text: str):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -448,7 +446,6 @@ def save_captcha_challenge(user_id: int, challenge_text: str):
     )
     conn.commit()
     conn.close()
-
 
 def get_captcha_challenge(user_id: int):
     conn = sqlite3.connect(DB_PATH)
@@ -463,14 +460,12 @@ def get_captcha_challenge(user_id: int):
         return row[0], datetime.datetime.fromisoformat(row[1])
     return None, None
 
-
 def delete_captcha_challenge(user_id: int):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("DELETE FROM captcha_challenges WHERE user_id = ?", (user_id,))
     conn.commit()
     conn.close()
-
 
 def update_user_captcha_solve_time(
     user_id: int, request_type: str, solve_time: datetime.datetime
@@ -483,7 +478,6 @@ def update_user_captcha_solve_time(
     )
     conn.commit()
     conn.close()
-
 
 def get_user_captcha_solve_time(user_id: int, request_type: str):
     conn = sqlite3.connect(DB_PATH)
@@ -498,15 +492,13 @@ def get_user_captcha_solve_time(user_id: int, request_type: str):
         return datetime.datetime.fromisoformat(row[0])
     return None
 
-
 # =========================
-# X / snscrape helpers
+# X helpers — COOKIE-BASED (single account) + fallback
 # =========================
 X_TASK_KEYWORD = "$FURBO"
 
-
 def _has_furbo_tweet_python(username: str) -> bool:
-    """Dùng Python API của snscrape (nếu có)."""
+    """Fallback: snscrape Python API."""
     try:
         for i, tweet in enumerate(sntwitter.TwitterUserScraper(username).get_items()):
             if i >= 20:
@@ -519,9 +511,8 @@ def _has_furbo_tweet_python(username: str) -> bool:
         logger.warning(f"snscrape python error: {e}")
         return False
 
-
 def _has_furbo_tweet_cli(username: str) -> bool:
-    """Fallback qua CLI snscrape."""
+    """Fallback: snscrape CLI."""
     try:
         result = subprocess.run(
             ["snscrape", "--max-results", "20", f"twitter-user:{username}"],
@@ -538,18 +529,78 @@ def _has_furbo_tweet_cli(username: str) -> bool:
         logger.warning(f"snscrape CLI error: {e}")
         return False
 
+async def _has_furbo_tweet_cookie(username: str) -> Optional[bool]:
+    """
+    Trả về:
+      True  -> có tweet chứa $FURBO
+      False -> không có
+      None  -> lỗi cookie / bị 403 / cấu hình sai
+    """
+    if not X_COOKIE_AUTH_TOKEN or not X_COOKIE_CT0:
+        logger.warning("X cookie not configured (X_COOKIE_AUTH_TOKEN/X_COOKIE_CT0 missing).")
+        return None
 
-def has_furbo_tweet(username: str) -> bool:
-    """Kiểm tra tweet chứa $FURBO của user."""
+    cookies = {
+        "auth_token": X_COOKIE_AUTH_TOKEN,
+        "ct0": X_COOKIE_CT0,
+    }
+
+    headers = {
+        "User-Agent": X_USER_AGENT,
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": f"https://twitter.com/{username}",
+        "x-csrf-token": X_COOKIE_CT0,
+        "x-twitter-active-user": "yes",
+        "x-twitter-client-language": "en",
+    }
+
+    # Cách ổn định: gọi web API adaptive search (cần cookie + csrf)
+    # q = "from:<username> $FURBO"
+    params = {
+        "q": f"from:{username} {X_TASK_KEYWORD}",
+        "count": "20",
+        "query_source": "typed_query",
+        "tweet_search_mode": "live",
+    }
+
+    url = "https://twitter.com/i/api/2/search/adaptive.json"
+    try:
+        async with httpx.AsyncClient(timeout=20.0, headers=headers, cookies=cookies, follow_redirects=True) as client:
+            r = await client.get(url, params=params)
+            if r.status_code != 200:
+                logger.warning(f"X web API status {r.status_code}: {r.text[:200]}")
+                return None
+
+            data = r.json()
+            tweets_obj = (data.get("globalObjects") or {}).get("tweets") or {}
+            for t in tweets_obj.values():
+                # text field có thể là 'full_text' hoặc 'text' tùy API
+                text = t.get("full_text") or t.get("text") or ""
+                if "$furbo" in text.lower():
+                    return True
+            return False
+    except Exception as e:
+        logger.warning(f"X web API error: {e}")
+        return None
+
+async def user_has_task_tweet(username: str) -> bool:
+    """
+    Ưu tiên cookie (1 account duy nhất). Nếu lỗi cookie (None) thì fallback sang snscrape (nếu có).
+    """
+    cookie_result = await _has_furbo_tweet_cookie(username)
+    if cookie_result is not None:
+        return cookie_result
+
+    # Fallback
     if SNSCRAPE_ENABLED:
         ok = _has_furbo_tweet_python(username)
         if ok:
             return True
-        # nếu python API fail, thử CLI
         return _has_furbo_tweet_cli(username)
     else:
-        return _has_furbo_tweet_cli(username)
-
+        # Không có cookie hợp lệ và cũng không có snscrape
+        return False
 
 # =========================
 # Telegram handlers
@@ -572,13 +623,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         disable_web_page_preview=True,
     )
 
-
 async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /send flow:
     1) 24h faucet cooldown check
     2) Nếu X chưa verify trong 24h -> hiện nhiệm vụ + OAuth PIN link
-    3) Sau khi connect: check tweet $FURBO qua snscrape
+    3) Sau khi connect: check tweet $FURBO qua web API (cookie 1 account)
     4) CAPTCHA mỗi ngày
     5) Hỏi ví & gửi SPL
     """
@@ -613,12 +663,8 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # PIN-based OAuth flow
                 auth = tweepy.OAuth1UserHandler(X_API_KEY, X_API_SECRET, callback="oob")
                 auth_url = auth.get_authorization_url(signin_with_twitter=False)
-                context.user_data["oauth_request_token"] = auth.request_token[
-                    "oauth_token"
-                ]
-                context.user_data["oauth_request_token_secret"] = auth.request_token[
-                    "oauth_token_secret"
-                ]
+                context.user_data["oauth_request_token"] = auth.request_token.get("oauth_token")
+                context.user_data["oauth_request_token_secret"] = auth.request_token.get("oauth_token_secret")
                 context.user_data["awaiting_x_verifier_for_send"] = True
 
                 task_message = (
@@ -652,14 +698,21 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-    # Đã có X username -> check tweet $FURBO
+    # Đã có X username -> check tweet $FURBO bằng cookie (1 account)
     if not x_username:
         await update.message.reply_text(
             "You must connect your X account first using /send to continue."
         )
         return
 
-    if not has_furbo_tweet(x_username):
+    ok = await user_has_task_tweet(x_username)
+    if not ok:
+        # Nếu cookie lỗi => gợi ý admin (log đã có chi tiết)
+        if not X_COOKIE_AUTH_TOKEN or not X_COOKIE_CT0:
+            await update.message.reply_text(
+                "Verification error: faucet's X session is not configured. Please try again later."
+            )
+            return
         await update.message.reply_text(
             f"We couldn't find a recent tweet containing `{X_TASK_KEYWORD}` from @{x_username}.\n"
             f"Please post a tweet with `{X_TASK_KEYWORD}` and run /send again."
@@ -694,7 +747,6 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Please provide your FOGO wallet address to receive 0.8 SPL FOGO:"
     )
 
-
 async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id in BANNED_USERS:
@@ -721,12 +773,8 @@ async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 auth = tweepy.OAuth1UserHandler(X_API_KEY, X_API_SECRET, callback="oob")
                 auth_url = auth.get_authorization_url(signin_with_twitter=False)
-                context.user_data["oauth_request_token"] = auth.request_token[
-                    "oauth_token"
-                ]
-                context.user_data["oauth_request_token_secret"] = auth.request_token[
-                    "oauth_token_secret"
-                ]
+                context.user_data["oauth_request_token"] = auth.request_token.get("oauth_token")
+                context.user_data["oauth_request_token_secret"] = auth.request_token.get("oauth_token_secret")
                 context.user_data["awaiting_x_verifier_for_send_fee"] = True
 
                 task_message = (
@@ -782,7 +830,6 @@ async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Please provide your FOGO wallet address to receive 0.01 native FOGO:"
     )
-
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Bắt mọi tin nhắn text: xử lý PIN OAuth, CAPTCHA, địa chỉ ví."""
@@ -997,7 +1044,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Mặc định
     await update.message.reply_text("Use /start, /send, or /send_fee to request tokens.")
 
-
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"An unexpected error occurred: {context.error}", exc_info=True)
     try:
@@ -1005,7 +1051,6 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("An error occurred. Please try again later.")
     except Exception:
         pass
-
 
 # =========================
 # Admin commands
@@ -1044,7 +1089,6 @@ async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(f"User {target_id} has been unbanned.")
 
-
 async def ban_wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     admin_ids = os.getenv("ADMIN_IDS", "").split(",")
@@ -1069,7 +1113,6 @@ async def ban_wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         logger.error(f"Failed to write to blacklist.txt: {e}")
 
     await update.message.reply_text(f"Wallet {wallet} has been blacklisted.")
-
 
 async def delete_wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -1108,7 +1151,6 @@ async def delete_wallet_command(update: Update, context: ContextTypes.DEFAULT_TY
             "An error occurred while trying to update the blacklist."
         )
 
-
 async def banstats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     admin_ids = os.getenv("ADMIN_IDS", "").split(",")
@@ -1132,7 +1174,6 @@ async def banstats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"Blacklisted wallets: {wallet_count}\nBanned users: {user_count}"
     )
-
 
 # =========================
 # Main
