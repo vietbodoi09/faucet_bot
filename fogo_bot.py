@@ -516,7 +516,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Hello {name}! I am the FOGO Testnet faucet bot.\n\n"
         "To receive tokens, you must complete the following tasks:\n"
         f"1. Follow these X (Twitter) accounts:\n{x_accounts_list}\n"
-        f"2. Post a public tweet containing the keyword: `$FURBO`"
+        f"2. Post a public tweet containing the keyword: `$FURBO`\n"
         "After completing the tasks, use the following commands:\n"
         "Use /send to receive 0.8 SPL FOGO tokens every 24 hours.\n"
         "Use /send_fee to receive a small amount of 0.01 native FOGO tokens every 24 hours."
@@ -555,7 +555,7 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 task_message = (
                     "You will need to solve a daily CAPTCHA and complete the following steps to claim tokens:\n\n"
                     f"1. Follow these X (Twitter) accounts:\n{x_accounts_list}\n\n"
-                    f"2. Post a public tweet containing the keyword: `$FURBO`"
+                    f"2. Post a public tweet containing the keyword: `$FURBO`\n"
                     f"3. Please connect your X account to proceed. Click the link below, authorize the bot, and then paste the provided PIN here:\n\n"
                     f"{auth_url}"
                 )
@@ -631,7 +631,7 @@ async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 task_message = (
                     "You will need to solve a daily CAPTCHA and complete the following steps to claim tokens:\n\n"
                     f"1. Follow these X (Twitter) accounts:\n{x_accounts_list}\n\n"
-                    f"2. Post a public tweet containing the keyword: `$FURBO`"
+                    f"2. Post a public tweet containing the keyword: `$FURBO`\n"
                     f"3. Please connect your X account to proceed. Click the link below, authorize the bot, and then paste the provided PIN here:\n\n"
                     f"{auth_url}"
                 )
