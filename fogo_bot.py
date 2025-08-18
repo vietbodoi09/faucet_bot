@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 PRIVATE_KEY = os.getenv("FOGO_BOT_PRIVATE_KEY")
 FOGO_TOKEN_MINT = PublicKey("So11111111111111111111111111111111111111112")
+OTHER_MINT =PublicKey("So11111111111111111111111111111111111111112")
 
 # List of target X (Twitter) accounts to follow
 TARGET_X_USERNAMES_STR = os.getenv(
@@ -75,6 +76,7 @@ else:
 
 # UPDATED: Reduced SPL FOGO from 0.2 to 0.15
 AMOUNT_TO_SEND_FOGO = 800_000_000  # 0.15 SPL FOGO (in base units, decimals=9)
+AMOUNT_TO_SEND_FURBO = 100_000_000
 
 # UPDATED: Changed FEE_AMOUNT from 0.1 FOGO to 0.01 FOGO (10_000_000 lamports)
 FEE_AMOUNT = 10_000_000           # 0.01 native FOGO (lamports)
@@ -401,6 +403,79 @@ async def send_fogo_spl_token(to_address: str, amount: int):
                 program_id=TOKEN_PROGRAM_ID,
                 source=sender_token_account,
                 mint=FOGO_TOKEN_MINT,
+                dest=receiver_token_account,
+                owner=sender.public_key,
+                amount=amount,
+                decimals=DECIMALS,
+                signers=[]
+            )
+        )
+        tx.add(transfer_ix)
+        tx.sign(sender)
+        raw_tx = tx.serialize()
+
+        async with AsyncClient("https://testnet.fogo.io") as client:
+            send_resp = await client.send_raw_transaction(raw_tx, opts=TxOpts(skip_confirmation=False))
+
+        if send_resp and isinstance(send_resp, dict) and 'result' in send_resp:
+            return send_resp['result']
+        else:
+            logger.error(f"Failed to send SPL transaction: {send_resp}")
+            return None
+
+    except Exception as e:
+        logger.error(f"Critical error while sending SPL token: {e}", exc_info=True)
+        return None
+        
+
+async def send_fogo_spl_token_other(to_address: str, amount: int):
+    try:
+        logger.info(f"Sending {amount / 1_000_000_000} SPL FOGO to {to_address}")
+
+        decoded_key = base58.b58decode(PRIVATE_KEY)
+        sender = SolanaKeypair.from_secret_key(decoded_key)
+        sender_pubkey = sender.public_key
+        receiver_pubkey = PublicKey(to_address)
+
+        sender_token_account = get_associated_token_address(sender_pubkey, OTHER_MINT)
+        receiver_token_account = get_associated_token_address(receiver_pubkey, OTHER_MINT)
+
+        async with AsyncClient("https://testnet.fogo.io") as client:
+            resp = await client.get_account_info(receiver_token_account)
+            account_exists = resp.get("result", {}).get("value") is not None
+
+        async with httpx.AsyncClient(timeout=20.0) as http_client:
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getLatestBlockhash",
+                "params": []
+            }
+            rpc_response = await http_client.post("https://testnet.fogo.io", json=payload)
+            rpc_json = rpc_response.json()
+            latest_blockhash = rpc_json.get("result", {}).get("value", {}).get("blockhash")
+
+        if not latest_blockhash:
+            logger.error(f"Invalid blockhash response: {rpc_json}")
+            return None
+
+        tx = Transaction()
+        tx.fee_payer = sender_pubkey
+        tx.recent_blockhash = latest_blockhash
+
+        if not account_exists:
+            create_ata_ix = create_associated_token_account(
+                payer=sender_pubkey,
+                owner=receiver_pubkey,
+                mint=OTHER_MINT
+            )
+            tx.add(create_ata_ix)
+
+        transfer_ix = transfer_checked(
+            TransferCheckedParams(
+                program_id=TOKEN_PROGRAM_ID,
+                source=sender_token_account,
+                mint=OTHER_MINT,
                 dest=receiver_token_account,
                 owner=sender.public_key,
                 amount=amount,
@@ -798,6 +873,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Sending {AMOUNT_TO_SEND_FOGO / 1_000_000_000} SPL FOGO to {address}...")
 
         tx_hash = await send_fogo_spl_token(address, AMOUNT_TO_SEND_FOGO)
+        tx_hash_other = await send_fogo_spl_token_other(address, AMOUNT_TO_SEND_FURBO)
+
 
         if tx_hash:
             update_last_request_time(user_id, "send_fogo", datetime.datetime.now(), address, tx_hash)
@@ -809,6 +886,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("❌ Failed to send SPL FOGO. Please try again later.")
         return
+        
+        if tx_hash_other:
+            update_last_request_time(user_id, "send_fogo", datetime.datetime.now(), address, tx_hash_other)
+            await update.message.reply_text(
+                f"✅ SPL FURBO sent successfully!\n"
+                f"[View transaction](https://fogoscan.com/tx/{tx_hash_other}?cluster=testnet)",
+                parse_mode="Markdown"
+            )
+        else:
+            await update.message.reply_text("❌ Failed to send SPL FOGO. Please try again later.")
+        return        
 
     if context.user_data.get("waiting_for_fee_address"):
         address = update.message.text.strip()
