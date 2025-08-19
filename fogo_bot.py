@@ -279,7 +279,7 @@ async def is_wallet_old_enough_on_solana(wallet_address: str) -> bool:
             tx_age = current_datetime - oldest_tx_datetime
 
             # Condition for 90 days (3 months)
-            if tx_age > datetime.timedelta(days=90):
+            if tx_age > datetime.timedelta(days=180):
                 logger.info(f"Wallet {wallet_address} oldest transaction is {tx_age.days} days old. It is old enough.")
                 return True
             else:
@@ -1080,5 +1080,6 @@ if __name__ == "__main__":
     app.add_error_handler(error_handler)
 
     app.run_polling()
+
 
 
