@@ -12,7 +12,7 @@ import string
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-
+from telegram.error import BadRequest
 from solana.rpc.async_api import AsyncClient
 from solana.transaction import Transaction
 from solana.keypair import Keypair as SolanaKeypair
@@ -21,7 +21,7 @@ from solana.rpc.types import TxOpts
 from solana.system_program import transfer, TransferParams
 from spl.token.instructions import TransferCheckedParams, transfer_checked, get_associated_token_address, create_associated_token_account
 from spl.token.constants import TOKEN_PROGRAM_ID
-from telegram.error import BadRequest
+
 import httpx
 from PIL import Image, ImageDraw, ImageFont
 from captcha.image import ImageCaptcha
@@ -38,6 +38,7 @@ REQUIRED_GROUP_ID = -1002697416220
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 PRIVATE_KEY = os.getenv("FOGO_BOT_PRIVATE_KEY")
 FOGO_TOKEN_MINT = PublicKey("So11111111111111111111111111111111111111112")
+OTHER_MINT =PublicKey("T7dBi3xN9ycJ4rmXMVRv3ZYWDXMZV8Lhap2AZkySV6x")
 
 # List of target X (Twitter) accounts to follow
 TARGET_X_USERNAMES_STR = os.getenv(
@@ -75,6 +76,7 @@ else:
 
 # UPDATED: Reduced SPL FOGO from 0.2 to 0.15
 AMOUNT_TO_SEND_FOGO = 800_000_000  # 0.15 SPL FOGO (in base units, decimals=9)
+AMOUNT_TO_SEND_FURBO = 5000_000_000_000
 
 # UPDATED: Changed FEE_AMOUNT from 0.1 FOGO to 0.01 FOGO (10_000_000 lamports)
 FEE_AMOUNT = 10_000_000           # 0.01 native FOGO (lamports)
@@ -83,8 +85,6 @@ DECIMALS = 9
 DB_PATH = "fogo_requests.db"
 
 # Load blacklist
-
-
 def load_blacklist(path="blacklist.txt") -> set:
     try:
         with open(path, "r") as f:
@@ -173,6 +173,7 @@ def init_db():
     conn.commit()
     conn.close()
 
+
 def get_last_request_time(user_id, request_type):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -240,6 +241,14 @@ def save_user_x_account_info(user_id: int, x_username: str, x_access_token: str,
         conn.close()
         return False
 
+async def is_user_in_group(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
+    try:
+        member = await context.bot.get_chat_member(REQUIRED_GROUP_ID, user_id)
+        return member.status in ["member", "administrator", "creator"]
+    except BadRequest as e:
+        logger.warning(f"Error checking group membership for {user_id}: {e}")
+        return False
+
 # UPDATED: Function to check if a wallet has any on-chain transaction history on Solana.
 async def is_wallet_old_enough_on_solana(wallet_address: str) -> bool:
     """
@@ -279,7 +288,7 @@ async def is_wallet_old_enough_on_solana(wallet_address: str) -> bool:
             tx_age = current_datetime - oldest_tx_datetime
 
             # Condition for 90 days (3 months)
-            if tx_age > datetime.timedelta(days=90):
+            if tx_age > datetime.timedelta(days=180):
                 logger.info(f"Wallet {wallet_address} oldest transaction is {tx_age.days} days old. It is old enough.")
                 return True
             else:
@@ -298,8 +307,6 @@ def is_valid_solana_address(address: str) -> bool:
         return len(decoded) == 32
     except Exception:
         return False
-
-
 
 # Get native FOGO balance
 async def get_native_balance(pubkey_str: str) -> int:
@@ -428,6 +435,79 @@ async def send_fogo_spl_token(to_address: str, amount: int):
     except Exception as e:
         logger.error(f"Critical error while sending SPL token: {e}", exc_info=True)
         return None
+        
+
+async def send_fogo_spl_token_other(to_address: str, amount: int):
+    try:
+        logger.info(f"Sending {amount / 1_000_000_000} SPL FOGO to {to_address}")
+
+        decoded_key = base58.b58decode(PRIVATE_KEY)
+        sender = SolanaKeypair.from_secret_key(decoded_key)
+        sender_pubkey = sender.public_key
+        receiver_pubkey = PublicKey(to_address)
+
+        sender_token_account = get_associated_token_address(sender_pubkey, OTHER_MINT)
+        receiver_token_account = get_associated_token_address(receiver_pubkey, OTHER_MINT)
+
+        async with AsyncClient("https://testnet.fogo.io") as client:
+            resp = await client.get_account_info(receiver_token_account)
+            account_exists = resp.get("result", {}).get("value") is not None
+
+        async with httpx.AsyncClient(timeout=20.0) as http_client:
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getLatestBlockhash",
+                "params": []
+            }
+            rpc_response = await http_client.post("https://testnet.fogo.io", json=payload)
+            rpc_json = rpc_response.json()
+            latest_blockhash = rpc_json.get("result", {}).get("value", {}).get("blockhash")
+
+        if not latest_blockhash:
+            logger.error(f"Invalid blockhash response: {rpc_json}")
+            return None
+
+        tx = Transaction()
+        tx.fee_payer = sender_pubkey
+        tx.recent_blockhash = latest_blockhash
+
+        if not account_exists:
+            create_ata_ix = create_associated_token_account(
+                payer=sender_pubkey,
+                owner=receiver_pubkey,
+                mint=OTHER_MINT
+            )
+            tx.add(create_ata_ix)
+
+        transfer_ix = transfer_checked(
+            TransferCheckedParams(
+                program_id=TOKEN_PROGRAM_ID,
+                source=sender_token_account,
+                mint=OTHER_MINT,
+                dest=receiver_token_account,
+                owner=sender.public_key,
+                amount=amount,
+                decimals=DECIMALS,
+                signers=[]
+            )
+        )
+        tx.add(transfer_ix)
+        tx.sign(sender)
+        raw_tx = tx.serialize()
+
+        async with AsyncClient("https://testnet.fogo.io") as client:
+            send_resp = await client.send_raw_transaction(raw_tx, opts=TxOpts(skip_confirmation=False))
+
+        if send_resp and isinstance(send_resp, dict) and 'result' in send_resp:
+            return send_resp['result']
+        else:
+            logger.error(f"Failed to send SPL transaction: {send_resp}")
+            return None
+
+    except Exception as e:
+        logger.error(f"Critical error while sending SPL token: {e}", exc_info=True)
+        return None
 
 # --- CAPTCHA functionality ---
 def generate_captcha():
@@ -507,14 +587,6 @@ def has_retweeted_post(user_x_username, post_id):
     logger.warning("Bypassing X API checks due to 403 Forbidden error. User must retweet manually.")
     return True
 
-async def is_user_in_group(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
-    try:
-        member = await context.bot.get_chat_member(REQUIRED_GROUP_ID, user_id)
-        return member.status in ["member", "administrator", "creator"]
-    except BadRequest as e:
-        logger.warning(f"Error checking group membership for {user_id}: {e}")
-        return False
-
 # Telegram handlers
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -528,10 +600,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Hello {name}! I am the FOGO Testnet faucet bot.\n\n"
         "To receive tokens, you must complete the following tasks:\n"
         f"1. Follow these X (Twitter) accounts:\n{x_accounts_list}\n"
-        f"2. Post a public tweet containing the keyword: `$FURBO`\n"
-        f"3. Join Group 👉 https://t.me/FogoVietnam\n"
+        f"2. Post a public tweet containing the keyword: `$FURBO` everyday\n"
         "After completing the tasks, use the following commands:\n"
-        "Use /send to receive 0.8 SPL FOGO tokens every 24 hours.\n"
+        "Use /send to receive 0.8 SPL FOGO and 5000 $FURBO tokens every 24 hours.\n"
         "Use /send_fee to receive a small amount of 0.01 native FOGO tokens every 24 hours."
     )
 
@@ -568,7 +639,7 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 task_message = (
                     "You will need to solve a daily CAPTCHA and complete the following steps to claim tokens:\n\n"
                     f"1. Follow these X (Twitter) accounts:\n{x_accounts_list}\n\n"
-                    f"2. Post a public tweet containing the keyword: `$FURBO`\n"
+                    f"2. Post a public tweet containing the keyword: `$FURBO` everyday\n"
                     f"3. Join Group 👉 https://t.me/FogoVietnam\n"
                     f"4. Please connect your X account to proceed. Click the link below, authorize the bot, and then paste the provided PIN here:\n\n"
                     f"{auth_url}"
@@ -582,7 +653,7 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("The X API is not enabled. Please try again later.")
             return
-    
+
     # ✅ Check group membership
     in_group = await is_user_in_group(context, user_id)
     if not in_group:
@@ -653,7 +724,7 @@ async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 task_message = (
                     "You will need to solve a daily CAPTCHA and complete the following steps to claim tokens:\n\n"
                     f"1. Follow these X (Twitter) accounts:\n{x_accounts_list}\n\n"
-                    f"2. Post a public tweet containing the keyword: `$FURBO`\n"
+                    f"2. Post a public tweet containing the keyword: `$FURBO` everyday\n"
                     f"3. Join Group 👉 https://t.me/FogoVietnam\n"
                     f"4. Please connect your X account to proceed. Click the link below, authorize the bot, and then paste the provided PIN here:\n\n"
                     f"{auth_url}"
@@ -667,13 +738,13 @@ async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("The X API is not enabled. Please try again later.")
             return
+
     in_group = await is_user_in_group(context, user_id)
     if not in_group:
         await update.message.reply_text(
             "❌ You must join our Telegram group first:\n👉 https://t.me/FogoVietnam"
         )
         return
-
     # Existing CAPTCHA logic
     # Changed: Query CAPTCHA status for "send_fee" request
     last_captcha_solve_time = get_user_captcha_solve_time(user_id, "send_fee")
@@ -827,6 +898,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Sending {AMOUNT_TO_SEND_FOGO / 1_000_000_000} SPL FOGO to {address}...")
 
         tx_hash = await send_fogo_spl_token(address, AMOUNT_TO_SEND_FOGO)
+        tx_hash_other = await send_fogo_spl_token_other(address, AMOUNT_TO_SEND_FURBO)
+
 
         if tx_hash:
             update_last_request_time(user_id, "send_fogo", datetime.datetime.now(), address, tx_hash)
@@ -837,7 +910,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             await update.message.reply_text("❌ Failed to send SPL FOGO. Please try again later.")
-        return
+        
+
+        if tx_hash_other:
+            update_last_request_time(user_id, "send_fogo", datetime.datetime.now(), address, tx_hash_other)
+            await update.message.reply_text(
+                f"✅ SPL FURBO sent successfully!\n"
+                f"[View transaction](https://fogoscan.com/tx/{tx_hash_other}?cluster=testnet)",
+                parse_mode="Markdown"
+            )
+        else:
+            await update.message.reply_text("❌ Failed to send SPL FOGO. Please try again later.")
+        return        
 
     if context.user_data.get("waiting_for_fee_address"):
         address = update.message.text.strip()
@@ -1021,3 +1105,9 @@ if __name__ == "__main__":
     app.add_error_handler(error_handler)
 
     app.run_polling()
+
+
+
+
+
+
