@@ -21,7 +21,7 @@ from solana.rpc.types import TxOpts
 from solana.system_program import transfer, TransferParams
 from spl.token.instructions import TransferCheckedParams, transfer_checked, get_associated_token_address, create_associated_token_account
 from spl.token.constants import TOKEN_PROGRAM_ID
-
+from telegram.ext import MessageHandler, filters
 import httpx
 from PIL import Image, ImageDraw, ImageFont
 from captcha.image import ImageCaptcha
@@ -1102,6 +1102,9 @@ if __name__ == "__main__":
     init_db()
     app = Application.builder().token(BOT_TOKEN).build()
 
+    app.add_handler(MessageHandler(filters.ChatType.GROUPS, lambda update, context: None))
+    app.add_handler(MessageHandler(filters.ChatType.SUPERGROUP, lambda update, context: None))
+
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("send", send_command))
     app.add_handler(CommandHandler("send_fee", send_fee_command))
@@ -1113,6 +1116,7 @@ if __name__ == "__main__":
     app.add_error_handler(error_handler)
 
     app.run_polling()
+
 
 
 
