@@ -607,6 +607,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type != "private":
+    await update.message.reply_text("⚠️ Please use this bot in private chat only.")
+    return
+    
     user_id = update.effective_user.id
     if user_id in BANNED_USERS:
         return
@@ -691,6 +695,10 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Please provide your FOGO wallet address to receive SPL FOGO:")
 
 async def send_fee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type != "private":
+    await update.message.reply_text("⚠️ Please use this bot in private chat only.")
+    return
+
     user_id = update.effective_user.id
     if user_id in BANNED_USERS:
         return
@@ -1105,6 +1113,7 @@ if __name__ == "__main__":
     app.add_error_handler(error_handler)
 
     app.run_polling()
+
 
 
 
