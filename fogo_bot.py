@@ -213,6 +213,9 @@ def get_telegram_user_id_by_x_username(x_username: str):
     if row:
         return row[0]
     return None
+async def ignore_group(update, context):
+
+    return
 
 def save_user_x_account_info(user_id: int, x_username: str, x_access_token: str, x_access_token_secret: str):
     """
@@ -1102,8 +1105,10 @@ if __name__ == "__main__":
     init_db()
     app = Application.builder().token(BOT_TOKEN).build()
 
-    app.add_handler(MessageHandler(filters.ChatType.GROUPS, lambda update, context: None))
-    app.add_handler(MessageHandler(filters.ChatType.SUPERGROUP, lambda update, context: None))
+
+    app.add_handler(MessageHandler(filters.ChatType.GROUPS, ignore_group))
+    app.add_handler(MessageHandler(filters.ChatType.SUPERGROUP, ignore_group))
+
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("send", send_command))
@@ -1116,6 +1121,7 @@ if __name__ == "__main__":
     app.add_error_handler(error_handler)
 
     app.run_polling()
+
 
 
 
