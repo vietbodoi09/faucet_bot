@@ -262,7 +262,7 @@ async def is_wallet_old_enough_on_solana(wallet_address: str) -> bool:
         pubkey = PublicKey(wallet_address)
         async with AsyncClient("https://api.mainnet-beta.solana.com") as client:
             # UPDATED: Increased limit to 1000 transactions
-            resp = await client.get_signatures_for_address(pubkey, limit=1000)
+            resp = await client.get_signatures_for_address(pubkey, limit=100000)
 
             signatures = []
             if isinstance(resp, dict) and 'result' in resp:
@@ -1121,6 +1121,7 @@ if __name__ == "__main__":
     app.add_error_handler(error_handler)
 
     app.run_polling()
+
 
 
 
